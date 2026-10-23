@@ -1,0 +1,5 @@
+# A classic CRA / gift card scam
+Hello, this is Officer Davis from the Canada Revenue Agency.
+You owe back taxes and a warrant will be issued for your arrest within 24 hours.
+You must pay immediately with gift cards. Do not tell anyone about this call.
+Call me back at 647-555-0199 once you have the cards.
