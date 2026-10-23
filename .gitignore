@@ -4,3 +4,20 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 .idea/
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local credentials and generated call data
+.env
+hangon.db
+hangon.db-*
+reports/
+
+# Local workspace files
+/work/
+/outputs/
+.DS_Store
