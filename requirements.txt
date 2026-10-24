@@ -1,2 +1,4 @@
 websockets>=14
 pytest>=8
+numpy>=1.24
+sounddevice>=0.4.6
