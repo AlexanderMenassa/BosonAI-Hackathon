@@ -189,7 +189,6 @@ Remaining interface details belong to the implementation phases below; closed se
 - [ ] Connect browser test-call arrival to the gateway before creating any Higgs session.
 - [ ] Add caller/receiver room sessions, receiver Ready/offline/busy status, and server-authorized call controls.
 - [ ] Implement ringing for `PASS`, immediate termination for `REJECT`, and reroute to Higgs connection for `SCREEN`.
-- [ ] Handle duplicate events, caller hang-up, screening failure, and failed receiver handoff.
 - [ ] Verify blocked/trusted paths never open Higgs and unknown callers never reach the receiver before approval.
 
 **Done when:** the browser can demonstrate all three initial routes and the gateway owns connection changes throughout the call. Trusted and blocked callers bypass Higgs; unknown callers enter screening.
