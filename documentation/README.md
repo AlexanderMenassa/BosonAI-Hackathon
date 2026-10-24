@@ -130,7 +130,7 @@ python -m hangon.server --port 8765        # then open http://127.0.0.1:8765/
 
 Screening needs `BOSON_API_KEY` in `.env`. The classifier defaults to Gemini (`GEMINI_API_KEY`); set `HANGON_CLASSIFIER=heuristic` to run without a Gemini key.
 
-One browser is the caller, another is the receiver. The caller enters a simulated phone number and taps Call; the receiver manages trust and block lists and taps Accept. Blocked numbers never ring, trusted numbers ring directly, unknown numbers are screened by Higgs, and after Accept the two people talk over a WebRTC bridge with Higgs detached. Two physical devices need HTTPS and ideally a TURN relay: see [docs/PHASE-2B-SETUP.md](docs/PHASE-2B-SETUP.md).
+One browser is the caller, another is the receiver. The caller enters a simulated phone number and taps Call; the receiver manages trust and block lists and taps Accept. Blocked numbers never ring, trusted numbers ring directly, unknown numbers are screened by Higgs, and after Accept the two people talk over a WebRTC bridge with Higgs detached. Two physical devices need HTTPS and ideally a TURN relay: see [docs/PHASE-2B-SETUP.md](../docs/PHASE-2B-SETUP.md).
 
 ### Screenshots
 
@@ -175,7 +175,7 @@ Also used: Gemini (`gemini-3.5-flash-lite`) or Ollama for classification, and `a
 - **Evaluated on a small synthetic set** of scripted and red-team calls. This is not evidence of real-world scam-detection accuracy; false positives and negatives are possible.
 - **Privacy:** with Gemini, call transcripts leave the machine. Use `--classifier ollama` to keep them local.
 - **Browser path:** the browser demo still waits for the classifier before the persona replies; background classification is wired into the terminal voice call and simulator.
-- **Two-device browser demo:** tested live on a phone and a laptop. Networks that block direct WebRTC connections may need a TURN relay, which is supported but must be configured (see [docs/PHASE-2B-SETUP.md](docs/PHASE-2B-SETUP.md)).
+- **Two-device browser demo:** tested live on a phone and a laptop. Networks that block direct WebRTC connections may need a TURN relay, which is supported but must be configured (see [docs/PHASE-2B-SETUP.md](../docs/PHASE-2B-SETUP.md)).
 - English-first; other languages are untested.
 
 ## Looking ahead
@@ -189,4 +189,4 @@ Hang On proves the core loop: answer, listen, judge, decide. These are the next 
 - **Guardian check-ups.** The system already sends the same summaries to an optional guardian, so a family member can check on the vulnerable person. In this demo those messages are simulated, and we did not demo or test them rigorously. Next: real delivery and thorough testing.
 - **Bug fixes and hardening.** Fix known issues, for example making the browser demo classify in the background like the voice call so the assistant never pauses, and test more scam types, languages and live calls.
 
-The original planning document is kept in [docs/ROADMAP.md](docs/ROADMAP.md); architecture notes are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The original planning document is kept in [docs/ROADMAP.md](docs/ROADMAP.md); architecture notes are in [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
