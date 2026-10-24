@@ -119,34 +119,28 @@ def test_time_cap_also_ends_an_unsure_call(store):
 
 
 # ---------------------------------------------------------------- scam
-def test_scam_stalls_then_ends_when_evidence_is_complete_and_blocks(store, cfg):
-    s = session(store, cfg,
-                res(Label.SCAM, 0.9, claimed_org="CRA"),
-                res(Label.SCAM, 0.95, payment_method="gift cards", urgency_tactic="arrest"),
-                res(Label.SCAM, 0.97, callback_number="647-555-0199"))
+def test_a_scam_verdict_ends_the_call_at_once_with_a_goodbye_and_blocks(store, cfg):
+    s = session(store, cfg, res(Label.UNSURE, 0.5), res(Label.SCAM, 0.95, claimed_org="CRA"))
     s.open()
-    assert s.on_caller_turn("a").mode is Mode.STALL
-    assert s.on_caller_turn("b").mode is Mode.STALL
-    d = s.on_caller_turn("c")
-    assert d.mode is Mode.GOODBYE and d.outcome is Outcome.SCAM_ENDED and s.evidence.complete
+    assert s.on_caller_turn("Hello, this is the CRA.").action is Action.CONTINUE
+    d = s.on_caller_turn("Pay with gift cards.")
+    assert d.action is Action.END and d.mode is Mode.GOODBYE and d.outcome is Outcome.SCAM_ENDED
     s.finish()
     assert store.is_blocked(s.number)
 
 
-def test_scam_ends_at_the_cap_even_with_incomplete_evidence(store, cfg):
-    s = session(store, cfg, res(Label.SCAM, 0.95, claimed_org="CRA"))
-    s.open()
-    for _ in range(cfg.max_turns - 1):
-        assert s.on_caller_turn("pay now").mode is Mode.STALL
-    assert s.on_caller_turn("pay now").outcome is Outcome.SCAM_ENDED
-
-
-def test_scam_hangup_still_blocks_the_number(store, cfg):
+def test_a_scam_caller_who_hangs_up_during_the_goodbye_is_still_blocked(store, cfg):
     s = session(store, cfg, res(Label.SCAM, 0.95))
     s.open()
     s.on_caller_turn("gift cards")
     s.on_hangup()
-    assert s.outcome is Outcome.SCAM_HANGUP and store.is_blocked(s.number)
+    assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number)
+
+
+def test_a_score_below_the_scam_threshold_does_not_end_the_call(store, cfg):
+    s = session(store, cfg, res(Label.SCAM, cfg.scam_enter - 0.01))
+    s.open()
+    assert s.on_caller_turn("hm").action is Action.CONTINUE and s.verdict is Label.UNSURE
 
 
 def test_unsure_hangup_does_not_block(store, cfg):
@@ -157,18 +151,12 @@ def test_unsure_hangup_does_not_block(store, cfg):
     assert s.outcome is Outcome.HANGUP_UNSURE and not store.is_blocked(s.number)
 
 
-def test_scam_verdict_is_sticky_one_reassuring_turn_does_not_flip_it(store, cfg):
-    s = session(store, cfg, res(Label.SCAM, 0.95), res(Label.LEGIT, 0.1), res(Label.SCAM, 0.9))
-    s.open()
-    assert s.on_caller_turn("a").mode is Mode.STALL
-    assert s.on_caller_turn("it's just the pharmacy, honest").mode is Mode.STALL  # still SCAM
-    assert s.verdict is Label.SCAM
 
 
 def test_scam_verdict_relaxes_after_sustained_low_scores(store, cfg):
     s = session(store, cfg, res(Label.SCAM, 0.95), res(Label.LEGIT, 0.1))
     s.open()
-    s.on_caller_turn("a")
+    s.on_caller_turn("You will be arrested.")
     s.on_caller_turn("b")
     s.on_caller_turn("c")  # second consecutive low turn
     assert s.verdict is not Label.SCAM
@@ -217,8 +205,9 @@ def test_heuristic_cra_scam_script(store):
         "You owe back taxes and a warrant will be issued for your arrest within 24 hours.",
         "You must pay immediately with gift cards. Do not tell anyone about this call.",
         "Call me back at 647-555-0199 once you have the cards."])
-    assert s.outcome is Outcome.SCAM_ENDED and s.evidence.complete and store.is_blocked(s.number)
-    assert s.evidence.claimed_org == "Canada Revenue Agency" and "gift card" in s.evidence.payment_method
+    assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number)
+    assert s.turns == 2                                   # naming the CRA is not enough; the warrant threat is
+    assert s.evidence.claimed_org == "Canada Revenue Agency" and "threat" in s.last_result.reason
 
 
 def test_heuristic_pharmacy_script(store):

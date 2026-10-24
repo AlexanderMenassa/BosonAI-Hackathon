@@ -115,11 +115,9 @@ class CallSession:
         self._update_verdict(result)
 
         if self.verdict is Label.SCAM:
-            if self.evidence.complete:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "evidence checklist complete")
-            if self.capped:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "time/turn cap reached")
-            return Decision(Action.CONTINUE, Mode.STALL, note="scam: stalling")
+            # End the call immediately upon a confirmed scam verdict,
+            # cutting off evasive or uncooperative callers right away.
+            return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "scam detected: ending call immediately")
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:

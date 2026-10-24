@@ -124,16 +124,16 @@ def test_session_is_configured_for_voice_with_automatic_replies_off(tmp_path):
     assert cfg["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
 
 
-def test_scam_voice_call_stalls_collects_evidence_and_blocks(tmp_path):
+def test_scam_voice_call_says_goodbye_as_soon_as_it_is_a_scam_and_blocks(tmp_path):
     call, session, received = run_voice(tmp_path, CRA)
     assert session.outcome is Outcome.SCAM_ENDED and call.store.is_blocked(call.number)
     creates = [e for e in received if e["type"] == "response.create"]
-    assert len(creates) == 5                                   # greeting + one reply per caller turn
+    assert len(creates) == 3                                   # greeting, one screening reply, the goodbye
     assert "Who's calling?" in creates[0]["response"]["instructions"]
-    assert any("collect the details" in c["response"]["instructions"] for c in creates)
-    assert "Goodbye" in creates[-1]["response"]["instructions"]
+    assert "Still unknown" in creates[1]["response"]["instructions"]     # turn 1: only naming the CRA, so screening
+    assert "Goodbye" in creates[-1]["response"]["instructions"]          # turn 2: the warrant threat
     assert call.audio.played and call.audio.stopped
-    assert [w for w, _ in session.transcript].count("caller") == 4
+    assert [w for w, _ in session.transcript].count("caller") == 2
 
 
 def test_legit_voice_call_is_forwarded(tmp_path):
@@ -201,7 +201,7 @@ def test_session_uses_a_stricter_speech_detector(tmp_path):
 def test_one_word_noise_that_cut_the_agent_off_is_ignored_and_it_carries_on(tmp_path):
     audio = FakeAudio(playing=True)
     call, session, received = run_voice(
-        tmp_path, ["This is the CRA, you owe back taxes and a warrant is out for your arrest.", "E."],
+        tmp_path, ["Hello, it's Dave from down the street, calling about the fence.", "E."],
         audio=audio, barge_in_at=2, hang_up_after=1.5, number="+16475550992")
     creates = [e["response"]["instructions"] for e in received if e["type"] == "response.create"]
     assert len(creates) == 3 and "cut off by a small noise" in creates[2]

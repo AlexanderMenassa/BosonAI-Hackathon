@@ -27,13 +27,13 @@ def call(tmp_path, scenario, number="+16475550111", settings=None):
     return s, store, cap
 
 
-def test_scam_call_blocks_notifies_both_people_and_writes_the_evidence_card(tmp_path):
+def test_scam_call_ends_blocks_notifies_both_people_and_writes_the_evidence_card(tmp_path):
     s, store, cap = call(tmp_path, "cra_scam")
-    assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number)
+    assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number) and s.turns == 2
     recipients = [to for to, _, _ in cap.sent]
     assert recipients.count("+1PROTECTED") == 2 and recipients.count("+1GUARDIAN") == 1
     card = open(cap.sent[1][2], encoding="utf-8").read()
-    assert "Canada Revenue Agency" in card and "gift card" in card and "647-555-0199" in card and "TRANSCRIPT" in card
+    assert "Canada Revenue Agency" in card and 'threat: "warrant"' in card and "TRANSCRIPT" in card
 
 
 def test_legit_call_sends_only_a_summary(tmp_path):
