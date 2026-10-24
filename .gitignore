@@ -6,7 +6,7 @@
 .idea/
 /hangon.db
 /reports/outbox.jsonl
-/reports/call_1.txt
+call_*.txt
 
 .env
 .env.local

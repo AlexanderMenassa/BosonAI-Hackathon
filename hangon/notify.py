@@ -21,8 +21,8 @@ class ConsoleNotifier:
         self.echo = echo
 
     def send(self, to: str, text: str, attachment: str | None = None) -> None:
-        with self.outbox.open("a") as f:
-            f.write(json.dumps({"ts": time.time(), "to": to, "text": text, "attachment": attachment}) + "\n")
+        with self.outbox.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": time.time(), "to": to, "text": text, "attachment": attachment}, ensure_ascii=False) + "\n")
         if self.echo:
             print(f"\n  SMS to {to or '(protected person)'}:\n    " + text.replace("\n", "\n    "))
             if attachment:

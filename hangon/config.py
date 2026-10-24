@@ -10,7 +10,7 @@ def load_dotenv(path: str = ".env") -> None:
     p = Path(path)
     if not p.exists():
         return
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -43,6 +43,7 @@ class Settings:
     # Higgs Realtime
     boson_api_key: str = ""
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
+    higgs_steering: str = "response"  # response | session  (run `python -m hangon.probe`)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,4 +65,5 @@ class Settings:
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
             boson_url=e.get("BOSON_REALTIME_URL", "wss://api.boson.ai/v1/realtime?model=higgs-realtime"),
+            higgs_steering=e.get("HIGGS_STEERING", "response"),
         )

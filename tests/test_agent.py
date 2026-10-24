@@ -9,8 +9,15 @@ from hangon.agent import AgentError, HiggsTextAgent
 from hangon.models import Mode, Persona
 
 
-async def fake_higgs(received, ws):
+DISTINCT = ["Hello, who is calling please?", "Which organization are you with?",
+            "Oh dear, let me find my glasses first.", "My cat Biscuit says hello, how lovely.",
+            "Goodness, the kettle is whistling, goodbye!"]
+
+
+async def fake_higgs(received, ws, replies=None):
+    """Answers each response.create with the next scripted reply (default: a new line every time)."""
     received.append(("auth", ws.request.headers.get("Authorization")))
+    n = 0
     async for raw in ws:
         evt = json.loads(raw)
         received.append((evt["type"], evt))
@@ -18,51 +25,63 @@ async def fake_higgs(received, ws):
             first = sum(1 for t, _ in received if t == "session.update") == 1
             await ws.send(json.dumps({"type": "session.created" if first else "session.updated"}))
         elif evt["type"] == "response.create":
-            for chunk in ("Oh, hello ", "dear."):
+            text = replies[min(n, len(replies) - 1)] if replies else DISTINCT[n % len(DISTINCT)]
+            n += 1
+            await ws.send(json.dumps({"type": "response.created", "response": {"id": f"resp_{n}"}}))
+            for chunk in (text[:10], text[10:]):
                 await ws.send(json.dumps({"type": "response.output_text.delta", "delta": chunk}))
+            await ws.send(json.dumps({"type": "response.output_text.done", "text": text}))
             await ws.send(json.dumps({"type": "response.done", "response": {"status": "completed"}}))
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
-def test_greeting_then_a_stalling_turn():
+def converse(steering, turns, server_replies=None):
+    """turns: list of (mode, caller_text, guidance). Returns (received events, replies)."""
     async def go():
-        received = []
-        async with serve(lambda ws: fake_higgs(received, ws), "127.0.0.1", 0) as srv:
+        received, replies = [], []
+        async with serve(lambda ws: fake_higgs(received, ws, server_replies), "127.0.0.1", 0) as srv:
             port = srv.sockets[0].getsockname()[1]
-            agent = HiggsTextAgent(Persona(name="Margaret"), "sk-test", url=f"ws://127.0.0.1:{port}")
+            agent = HiggsTextAgent(Persona(name="Margaret"), "sk-test", url=f"ws://127.0.0.1:{port}",
+                                   steering=steering)
             await agent.start()
-            g = await agent.say(Mode.GREET)
-            s = await agent.say(Mode.STALL, "pay me in gift cards")
+            for mode, text, guidance in turns:
+                replies.append(await agent.say(mode, text, guidance))
             await agent.close()
-        return received, g, s
+        return received, replies
+    return asyncio.run(go())
 
-    received, g, s = run(go())
-    assert received[0] == ("auth", "Bearer sk-test")
-    assert g == "Oh, hello dear." and s == "Oh, hello dear."
-    updates = [e for t, e in received if t == "session.update"]
-    assert len(updates) == 2  # one per mode change
-    assert updates[0]["session"]["output_modalities"] == ["text"]
+
+CALL = [(Mode.GREET, None, ""),
+        (Mode.SCREEN, "This is the CRA", "This turn: Ask which organization."),
+        (Mode.STALL, "You owe taxes", "This turn: Mishear one word.")]
+
+
+def events(received, kind):
+    return [e for t, e in received if t == kind]
+
+
+def test_session_steering_sends_fresh_instructions_every_turn():
+    received, replies = converse("session", CALL)
+    assert received[0] == ("auth", "Bearer sk-test") and replies == DISTINCT[:3]
+    updates = events(received, "session.update")
+    assert len(updates) == 3 and all(u["session"]["output_modalities"] == ["text"] for u in updates)
     assert "Who's calling?" in updates[0]["session"]["instructions"]
-    assert "AS Margaret" in updates[1]["session"]["instructions"]
-    item = next(e for t, e in received if t == "conversation.item.create")
-    assert item["item"]["content"][0] == {"type": "input_text", "text": "pay me in gift cards"}
+    assert "Ask which organization" in updates[1]["session"]["instructions"]
+    assert "You are now Margaret" in updates[2]["session"]["instructions"]
+    assert "Mishear one word" in updates[2]["session"]["instructions"]
 
 
-def test_same_mode_does_not_resend_session_update():
-    async def go():
-        received = []
-        async with serve(lambda ws: fake_higgs(received, ws), "127.0.0.1", 0) as srv:
-            agent = HiggsTextAgent(Persona(), "k", url=f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}")
-            await agent.start()
-            await agent.say(Mode.STALL, "one")
-            await agent.say(Mode.STALL, "two")
-            await agent.close()
-        return received
+def test_session_steering_skips_identical_updates():
+    received, _ = converse("session", [(Mode.STALL, "a", "same"), (Mode.STALL, "b", "same")])
+    assert len(events(received, "session.update")) == 1
 
-    assert sum(1 for t, _ in run(go()) if t == "session.update") == 1
+
+def test_response_steering_puts_the_role_on_each_reply():
+    received, _ = converse("response", CALL)
+    updates = events(received, "session.update")
+    assert len(updates) == 1 and "Say exactly" not in updates[0]["session"]["instructions"]  # base prompt only
+    creates = events(received, "response.create")
+    assert "Who's calling?" in creates[0]["response"]["instructions"]
+    assert "You are now Margaret" in creates[2]["response"]["instructions"]
 
 
 def test_server_error_event_raises_agent_error():
@@ -80,10 +99,92 @@ def test_server_error_event_raises_agent_error():
             finally:
                 await agent.close()
 
-    with pytest.raises(AgentError):
-        run(go())
+    with pytest.raises(AgentError, match="rejected"):
+        asyncio.run(go())
 
 
-def test_missing_api_key_is_a_clear_error():
+def test_server_closing_with_auth_code_gives_a_clear_message():
+    async def server(ws):
+        await ws.recv()
+        await ws.close(3000, "invalid key")
+
+    async def go():
+        async with serve(server, "127.0.0.1", 0) as srv:
+            agent = HiggsTextAgent(Persona(), "k", url=f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}")
+            await agent.start()
+            try:
+                await agent.say(Mode.GREET)
+            finally:
+                await agent.close()
+
+    with pytest.raises(AgentError, match="API key was rejected"):
+        asyncio.run(go())
+
+
+def test_unreachable_server_is_an_agent_error_not_a_traceback():
+    async def go():
+        agent = HiggsTextAgent(Persona(), "k", url="ws://127.0.0.1:1")
+        await agent.start()
+    with pytest.raises(AgentError, match="could not connect"):
+        asyncio.run(go())
+
+
+def test_default_steering_is_response():
+    assert HiggsTextAgent(Persona(), "k").steering == "response"
+
+
+def test_repeated_reply_is_retried_and_the_fresh_one_is_used():
+    received, replies = converse("response", CALL, server_replies=[
+        "Hello? This is Margaret's assistant.", "Which company is this?", "Which company is this?",
+        "Oh dear, let me find my glasses first."])
+    assert replies == ["Hello? This is Margaret's assistant.", "Which company is this?",
+                       "Oh dear, let me find my glasses first."]
+    creates = events(received, "response.create")
+    assert len(creates) == 4 and "IMPORTANT" in creates[3]["response"]["instructions"]
+    # the retry does not resend the caller's words
+    assert len([e for e in events(received, "conversation.item.create")]) == 2
+
+
+def test_a_reply_that_keeps_repeating_falls_back_to_a_scripted_line():
+    same = "Could you please hold on while I find a pen?"
+    turns = [(Mode.STALL, "a", "g1"), (Mode.STALL, "b", "g2"), (Mode.GOODBYE, "c", "g3")]
+    _, replies = converse("response", turns, server_replies=[same])
+    assert replies[0] == same
+    assert replies[1] != same and replies[2] != same           # scripted fallbacks, not loops
+    assert "door" in replies[2] or "Goodbye" in replies[2]      # the goodbye still happens
+
+
+def test_near_identical_reply_counts_as_a_repeat():
+    agent = HiggsTextAgent(Persona(), "k")
+    agent._said = ["Oh, hello there! I'm so sorry, I just got to the phone."]
+    assert agent._is_repeat("Oh hello there, I'm so sorry I just got to the phone!")
+    assert not agent._is_repeat("Gift cards? Which shop sells those, dear?")
+    assert agent._is_repeat("   ")
+
+
+def test_text_from_the_done_event_is_used_when_no_deltas_arrive():
+    async def server(ws):
+        async for raw in ws:
+            t = json.loads(raw)["type"]
+            if t == "session.update":
+                await ws.send(json.dumps({"type": "session.created"}))
+            elif t == "response.create":
+                await ws.send(json.dumps({"type": "response.output_text.done", "text": "Only in done."}))
+                await ws.send(json.dumps({"type": "response.done", "response": {"status": "completed"}}))
+
+    async def go():
+        async with serve(server, "127.0.0.1", 0) as srv:
+            agent = HiggsTextAgent(Persona(), "k", url=f"ws://127.0.0.1:{srv.sockets[0].getsockname()[1]}")
+            await agent.start()
+            try:
+                return await agent.say(Mode.GREET)
+            finally:
+                await agent.close()
+    assert asyncio.run(go()) == "Only in done."
+
+
+def test_bad_config_is_a_clear_error():
     with pytest.raises(AgentError, match="BOSON_API_KEY"):
         HiggsTextAgent(Persona(), "")
+    with pytest.raises(AgentError, match="steering"):
+        HiggsTextAgent(Persona(), "k", steering="telepathy")

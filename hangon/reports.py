@@ -66,7 +66,7 @@ def write_report(s: CallSession, settings: Settings) -> Path:
     d = Path(settings.reports_dir)
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"call_{s.call_id}.txt"
-    path.write_text(evidence_card(s))
+    path.write_text(evidence_card(s), encoding="utf-8")
     return path
 
 
