@@ -70,7 +70,7 @@ def test_ollama_classifier_parses_a_model_reply(ollama_stub):
     _Handler.reply = {"label": "scam", "scam_score": 0.97, "reason": "gift cards", "claimed_org": "CRA",
                       "payment_method": "gift cards", "callback_number": None, "urgency_tactic": "arrest",
                       "high_stakes": True, "caller_summary": "Fake CRA call"}
-    r = OllamaClassifier(url, "stub").classify([("caller", "pay with gift cards")])
+    r = OllamaClassifier(url, "stub").classify([("caller", "This is the CRA. Pay with gift cards.")])
     assert r.label is Label.SCAM and r.high_stakes and r.evidence.claimed_org == "CRA" and r.source == "ollama:stub"
 
 
@@ -96,3 +96,32 @@ def test_phone_numbers_spoken_as_words_are_captured():
 def test_cra_as_transcribed_with_spaced_letters():
     assert extract_evidence("you owe back taxes to the C R A").claimed_org == "Canada Revenue Agency"
     assert extract_evidence("this is the R C A calling").claimed_org == "Canada Revenue Agency"
+
+
+def test_evidence_the_caller_never_said_is_dropped():
+    from hangon.classifier import ground_evidence
+    from hangon.models import Evidence
+    copied = Evidence("Canada Revenue Agency", "gift cards", "647-555-0199", "arrest threat, today")
+    ev = ground_evidence(copied, "Hello, this is Officer Davis from the Canada Revenue Agency.")
+    assert ev.claimed_org == "Canada Revenue Agency"
+    assert ev.payment_method is None and ev.callback_number is None and ev.urgency_tactic is None
+
+
+def test_evidence_the_caller_did_say_is_kept_even_as_spoken_digits_or_initials():
+    from hangon.classifier import ground_evidence
+    from hangon.models import Evidence
+    said = ("This is the C R A. There's a warrant for your arrest. Pay with gift cards. "
+            "Call six four seven five five five zero one nine nine.")
+    ev = ground_evidence(Evidence("Canada Revenue Agency", "gift cards", "647-555-0199", "arrest threat"), said)
+    assert ev.complete
+
+
+def test_llm_evidence_is_grounded_and_gaps_filled_from_the_caller_words(ollama_stub):
+    srv, url = ollama_stub
+    _Handler.reply = {"label": "scam", "scam_score": 0.9, "reason": "r", "claimed_org": "CRA",
+                      "payment_method": "gift cards", "callback_number": "647-555-0199", "urgency_tactic": None,
+                      "high_stakes": True, "caller_summary": "s"}
+    r = OllamaClassifier(url, "stub").classify([("caller", "This is the CRA. You must pay immediately.")])
+    assert r.evidence.claimed_org == "CRA"
+    assert r.evidence.payment_method is None and r.evidence.callback_number is None   # invented: dropped
+    assert r.evidence.urgency_tactic == "immediately"                                  # filled from the words

@@ -1,0 +1,6 @@
+# Ordinary clinic call: specific purpose, no requests for payment or personal info.
+Hello, this is Dr. Lee's dental office calling for Margaret.
+I'm calling to confirm her dental checkup and cleaning scheduled for tomorrow at 10:00 AM.
+There's no need to bring anything, but please arrive about ten minutes early if possible.
+If she needs to reschedule, she can call our office back at 416-555-0188.
+Thank you so much, and have a wonderful afternoon.

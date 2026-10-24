@@ -1,0 +1,9 @@
+# Fake bank fraud department: calm, professional, sounds legitimate. Asks for codes and a transfer late.
+Good afternoon, this is Daniel from the fraud prevention team at TD Bank.
+We're calling about some unusual activity we noticed on Margaret's card this morning.
+There were two purchases at an electronics store in Montreal. Did she make those purchases?
+Okay, thank you. We've blocked those for now, so she won't lose any money.
+To finish securing the account, we'll send a six-digit code to her phone, and we just need her to read it back to us.
+Our records also show someone may have access to her savings, so we recommend moving the balance to a new protected account while we investigate.
+I can give you the new account number now, and she can do the transfer at the branch or online.
+This needs to be done before end of day, otherwise the bank can't guarantee the funds.

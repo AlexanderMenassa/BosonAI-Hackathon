@@ -3,6 +3,7 @@
     python -m hangon.voice                         # headphones recommended
     python -m hangon.voice --no-barge-in           # no headphones: mic is muted while the agent speaks
     python -m hangon.voice --classifier ollama     # local LLM (slow on CPU: long pauses)
+    python -m hangon.voice --classifier gemini     # hosted Gemini (fast; needs GEMINI_API_KEY)
     python -m hangon.voice --list-devices          # pick --input-device / --output-device
 
 Press Enter at any time to hang up.
@@ -37,6 +38,7 @@ from .models import Action, Mode, Persona
 from .notify import ConsoleNotifier, Notifier
 from .persona import base_prompt, build_instructions, turn_guidance
 from .reports import notify_after_call
+from .sim import CLASSIFIERS
 from .store import Store
 
 
@@ -260,7 +262,7 @@ class VoiceCall:
             d = await asyncio.to_thread(self.session.on_caller_turn, text)
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
-            guidance = turn_guidance(d.mode, self.session.evidence, self.session.turns)
+            guidance = turn_guidance(d.mode, self.session.evidence, self.session.turns, is_personal=self.session.is_personal)
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")
@@ -319,7 +321,7 @@ def main() -> None:
             pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--number", default="+14165550900", help="caller's phone number (pretend)")
-    ap.add_argument("--classifier", choices=["heuristic", "ollama"], default="heuristic")
+    ap.add_argument("--classifier", choices=CLASSIFIERS, default="heuristic")
     ap.add_argument("--persona-name", default="Margaret")
     ap.add_argument("--voice", default="default", help="Higgs voice preset or registered voice id")
     ap.add_argument("--language", default="en", help="transcription language; '' to let Higgs detect it")

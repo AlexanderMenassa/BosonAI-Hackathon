@@ -3,6 +3,7 @@
     python -m hangon.sim --number +14165550100                       # type the caller's lines
     python -m hangon.sim --number +14165550100 --scenario scenarios/cra_scam.txt
     python -m hangon.sim --classifier ollama --agent higgs ...       # real local LLM + Higgs Realtime
+    python -m hangon.sim --classifier gemini ...                     # hosted Gemini classifier (GEMINI_API_KEY)
     python -m hangon.sim --agent higgs --debug ...                   # show what is sent to Higgs each turn
     python -m hangon.sim --list-blocked | --unblock NUMBER | --trust NUMBER --label "Dr. Lee"
 
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from .agent import Agent, AgentError, HiggsTextAgent, ScriptedAgent
-from .classifier import Classifier, HeuristicClassifier, OllamaClassifier
+from .classifier import Classifier, GeminiClassifier, HeuristicClassifier, OllamaClassifier
 from .config import Settings
 from .engine import CallSession
 from .models import Action, Mode, Persona
@@ -27,6 +28,7 @@ from .reports import notify_after_call
 from .store import Store
 
 NextLine = Callable[[], Awaitable["str | None"]]
+CLASSIFIERS = ("heuristic", "ollama", "gemini")
 
 
 def make_classifier(kind: str, s: Settings) -> Classifier:
@@ -34,6 +36,11 @@ def make_classifier(kind: str, s: Settings) -> Classifier:
         return HeuristicClassifier()
     if kind == "ollama":
         return OllamaClassifier(s.ollama_url, s.ollama_model, s.ollama_timeout)
+    if kind == "gemini":
+        try:
+            return GeminiClassifier(s.gemini_api_key, s.gemini_model, s.gemini_timeout)
+        except ValueError as e:
+            raise SystemExit(str(e))
     raise SystemExit(f"unknown classifier {kind!r}")
 
 
@@ -92,7 +99,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 say(f"caller> {text}")
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
-            guidance = turn_guidance(d.mode, session.evidence, session.turns)
+            guidance = turn_guidance(d.mode, session.evidence, session.turns, is_personal=session.is_personal)
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")
@@ -122,7 +129,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--number", default="+14165550100", help="caller's phone number")
     ap.add_argument("--scenario", help="text file with one caller line per line")
-    ap.add_argument("--classifier", choices=["heuristic", "ollama"], default="heuristic")
+    ap.add_argument("--classifier", choices=CLASSIFIERS, default="heuristic")
     ap.add_argument("--agent", choices=["scripted", "higgs"], default="scripted")
     ap.add_argument("--persona-name", default="Margaret")
     ap.add_argument("--debug", action="store_true", help="print what is sent to and received from Higgs")

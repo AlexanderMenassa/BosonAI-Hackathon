@@ -55,6 +55,14 @@ class CallSession:
 
     # ------------------------------------------------------------------ properties
     @property
+    def is_personal(self) -> bool:
+        # Check recent caller text for family / personal indicators
+        caller_text_combined = " ".join(t.lower() for who, t in self.transcript if who == "caller")
+        personal_keywords = ["grandma", "grandpa", "grandson", "granddaughter", "mom", "dad", "son", "daughter",
+                             "it's me", "family", "nephew", "niece"]
+        return any(kw in caller_text_combined for kw in personal_keywords)
+
+    @property
     def elapsed(self) -> float:
         return self._clock() - self.started
 
@@ -115,11 +123,9 @@ class CallSession:
         self._update_verdict(result)
 
         if self.verdict is Label.SCAM:
-            if self.evidence.complete:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "evidence checklist complete")
-            if self.capped:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "time/turn cap reached")
-            return Decision(Action.CONTINUE, Mode.STALL, note="scam: stalling")
+            # End the call immediately upon a confirmed scam verdict,
+            # cutting off evasive or uncooperative callers right away.
+            return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "scam detected: ending call immediately")
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:
@@ -127,8 +133,8 @@ class CallSession:
                                  "legit but high-stakes: not forwarded")
             if self.browser_call_id is None:
                 self.outcome = Outcome.FORWARDED
-            return Decision(Action.FORWARD, Mode.HANDOFF,
-                            outcome=self.outcome, note="legit: forwarding")
+            return Decision(Action.FORWARD, Mode.HANDOFF, outcome=self.outcome,
+                            note="legit: forwarding")
 
         # UNSURE
         if self.capped:

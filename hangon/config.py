@@ -30,15 +30,20 @@ class Settings:
     max_seconds: float = 180.0
 
     # Verdict thresholds (on the classifier's scam score, 0..1) with hysteresis.
-    scam_enter: float = 0.75
-    scam_exit: float = 0.40       # score must stay below this to leave SCAM...
+    scam_enter: float = 0.85
+    scam_exit: float = 0.6       # score must stay below this to leave SCAM...
     scam_exit_turns: int = 2      # ...for this many consecutive turns
-    legit_enter: float = 0.25
+    legit_enter: float = 0.15
 
     # Local classifier
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
-    ollama_timeout: float = 20.0
+    ollama_timeout: float = 30.0
+
+    # Hosted classifier (Google Gemini API)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_timeout: float = 30.0
 
     # Higgs Realtime
     boson_api_key: str = ""
@@ -62,13 +67,16 @@ class Settings:
             guardian_phone=e.get("HANGON_GUARDIAN_PHONE", ""),
             max_turns=int(e.get("HANGON_MAX_TURNS", 10)),
             max_seconds=float(e.get("HANGON_MAX_SECONDS", 180)),
-            scam_enter=float(e.get("HANGON_SCAM_ENTER", 0.75)),
-            scam_exit=float(e.get("HANGON_SCAM_EXIT", 0.40)),
+            scam_enter=float(e.get("HANGON_SCAM_ENTER", 0.9)),
+            scam_exit=float(e.get("HANGON_SCAM_EXIT", 0.3)),
             scam_exit_turns=int(e.get("HANGON_SCAM_EXIT_TURNS", 2)),
-            legit_enter=float(e.get("HANGON_LEGIT_ENTER", 0.25)),
+            legit_enter=float(e.get("HANGON_LEGIT_ENTER", 0.3)),
             ollama_url=e.get("OLLAMA_URL", "http://localhost:11434"),
             ollama_model=e.get("OLLAMA_MODEL", "llama3.2:3b"),
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),
+            gemini_api_key=e.get("GEMINI_API_KEY", ""),
+            gemini_model=e.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+            gemini_timeout=float(e.get("GEMINI_TIMEOUT", 15)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
             higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),
             boson_url=e.get("BOSON_REALTIME_URL",

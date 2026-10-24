@@ -1,18 +1,21 @@
 """Transcript classifiers.
 
 The classifier reads the running transcript and returns a verdict plus extracted evidence.
-Two backends:
+Backends:
 
 * HeuristicClassifier: keyword rules. Works offline, free, instant. It is the fallback and the
-  baseline the LLM has to beat.
-* OllamaClassifier: a small local LLM. The transcript is untrusted input, the output is forced
-  into a fixed JSON shape, and everything is validated before use.
+  baseline the LLMs have to beat.
+* LLM classifiers (LLMClassifier): the transcript is untrusted input, the output is forced into a fixed
+  JSON shape, everything is validated, and evidence is kept only if the caller actually said it.
+  - OllamaClassifier: a small local model. Private, but slow on a CPU-only laptop.
+  - GeminiClassifier: Google's hosted Gemini API. Fast, but the transcript leaves the computer.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+import urllib.error
 import urllib.request
 from typing import Protocol
 
@@ -98,7 +101,7 @@ class HeuristicClassifier:
         low = text.lower()
         score = 0.5
         hits: list[str] = []
-        for weight, rules in ((0.3, _SCAM_STRONG), (0.15, _SCAM_MEDIUM), (-0.2, _LEGIT)):
+        for weight, rules in ((0.25, _SCAM_STRONG), (0.15, _SCAM_MEDIUM), (-0.2, _LEGIT)):
             for pat, label in rules:
                 if re.search(pat, low):
                     score += weight
@@ -170,6 +173,9 @@ police, or tech support, "your grandchild is in trouble", asking to verify perso
 Legit signals: a specific, ordinary reason (pharmacy prescription ready, dentist appointment, \
 delivery) with no request for money or personal details.
 If there is not enough information yet, use "unsure".
+"If a caller sounds like a distressed family member but hasn't yet requested unusual payment methods, gift cards, or couriers, use 'unsure' with a moderate score (0.4-0.6) rather than jumping straight to a scam verdict."
+Use ONLY what the caller actually said in this transcript. Never fill a field from the examples below: they are
+separate, made-up calls. If the caller has not said something yet, that field is null.
 
 Reply with ONLY one JSON object, no other text:
 {"label": "legit" | "unsure" | "scam",
@@ -182,11 +188,11 @@ Reply with ONLY one JSON object, no other text:
  "high_stakes": true if the caller claims to be a bank, government agency, police, or involves money,
  "caller_summary": "one short line, e.g. 'Riverside Pharmacy called: prescription ready for pickup'"}
 
-Examples
-Transcript: caller: Hi, this is Riverside Pharmacy. Your prescription is ready for pickup.
-{"label":"legit","scam_score":0.05,"reason":"Ordinary pharmacy pickup notice, no requests.","claimed_org":"Riverside Pharmacy","payment_method":null,"callback_number":null,"urgency_tactic":null,"high_stakes":false,"caller_summary":"Riverside Pharmacy called: prescription ready for pickup"}
-Transcript: caller: This is the Canada Revenue Agency. You owe back taxes and will be arrested today unless you pay with gift cards. Call 647-555-0199.
-{"label":"scam","scam_score":0.98,"reason":"Tax agency threatening arrest and demanding gift cards.","claimed_org":"Canada Revenue Agency","payment_method":"gift cards","callback_number":"647-555-0199","urgency_tactic":"arrest threat, today","high_stakes":true,"caller_summary":"Claimed to be the CRA, threatened arrest, demanded gift cards"}
+Examples (made-up calls, not this one)
+Transcript: caller: Hi, this is Lakeside Veterinary Clinic. Your dog's vaccination appointment is tomorrow at three.
+{"label":"legit","scam_score":0.05,"reason":"Ordinary appointment reminder, no requests.","claimed_org":"Lakeside Veterinary Clinic","payment_method":null,"callback_number":null,"urgency_tactic":null,"high_stakes":false,"caller_summary":"Lakeside Veterinary Clinic called: vaccination appointment tomorrow at three"}
+Transcript: caller: This is Windows technical support. Your computer has a virus and you must pay 300 dollars in Bitcoin right now. Call us at 1-888-555-0142.
+{"label":"scam","scam_score":0.97,"reason":"Fake tech support demanding Bitcoin with pressure.","claimed_org":"Windows technical support","payment_method":"Bitcoin","callback_number":"1-888-555-0142","urgency_tactic":"right now","high_stakes":true,"caller_summary":"Claimed to be Windows support, demanded Bitcoin"}
 Transcript: caller: Hello, is this the homeowner? I need to talk about something important.
 {"label":"unsure","scam_score":0.5,"reason":"No identity or purpose given yet.","claimed_org":null,"payment_method":null,"callback_number":null,"urgency_tactic":null,"high_stakes":false,"caller_summary":"Unidentified caller wants to discuss something important"}
 """
@@ -221,6 +227,43 @@ def parse_llm_json(raw: str) -> dict:
         return json.loads(m.group(0))
 
 
+_STOPWORDS = {"the", "and", "for", "with", "your", "you", "from", "this", "that", "are", "our", "via", "any"}
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3 and w not in _STOPWORDS]
+
+
+def ground_evidence(ev: Evidence, said: str) -> Evidence:
+    """Keep only evidence that is actually in what the caller said. A model can copy facts from its prompt
+    examples or invent them; the evidence card is for fraud reports, so it must contain only the caller's words.
+
+    * callback number: its digits must appear in the caller's digits (spoken numbers converted first)
+    * other fields: at least one real word must appear in the caller's words, or the field's initials must
+      (so "Canada Revenue Agency" is grounded by a caller saying "CRA" or "C R A")
+    """
+    said_norm = spoken_digits_to_numbers(said).lower()
+    said_digits = re.sub(r"\D", "", said_norm)
+    said_words = set(re.findall(r"[a-z0-9]+", said_norm))
+    said_words |= {"".join(m.split()) for m in re.findall(r"\b(?:[a-z] ){1,5}[a-z]\b", said_norm)}  # "c r a" -> "cra"
+
+    def grounded_text(value: str | None) -> str | None:
+        if not value:
+            return None
+        words = _words(value)
+        initials = "".join(w[0] for w in re.findall(r"[a-z]+", value.lower()))
+        return value if any(w in said_words for w in words) or (len(initials) >= 2 and initials in said_words) else None
+
+    number = ev.callback_number
+    digits = re.sub(r"\D", "", number or "")
+    return Evidence(
+        claimed_org=grounded_text(ev.claimed_org),
+        payment_method=grounded_text(ev.payment_method),
+        callback_number=number if len(digits) >= 7 and digits in said_digits else None,
+        urgency_tactic=grounded_text(ev.urgency_tactic),
+    )
+
+
 def result_from_dict(d: dict, source: str) -> ClassifierResult:
     label = Label(str(d.get("label", "unsure")).lower())
     score = max(0.0, min(1.0, float(d.get("scam_score", 0.5))))
@@ -237,35 +280,89 @@ def result_from_dict(d: dict, source: str) -> ClassifierResult:
     )
 
 
-class OllamaClassifier:
-    """Local LLM via Ollama's /api/chat. Falls back to the heuristic if the model is unavailable."""
+def post_json(url: str, body: dict, headers: dict, timeout: float) -> dict:
+    """POST JSON, return JSON. HTTP errors carry the server's message (e.g. 'model not found')."""
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"HTTP {e.code}: {detail}") from e
 
-    def __init__(self, url: str = "http://localhost:11434", model: str = "llama3.2:3b",
-                 timeout: float = 20.0, fallback: Classifier | None = None):
-        self.url, self.model, self.timeout = url.rstrip("/"), model, timeout
+
+class LLMClassifier:
+    """Shared by every LLM backend: the prompt, JSON validation, evidence grounding, and the fallback.
+    A backend only implements complete(system, user) -> the model's raw text reply."""
+
+    name = "llm"
+
+    def __init__(self, fallback: Classifier | None = None):
         self.fallback = fallback or HeuristicClassifier()
-        self.name = f"ollama:{model}"
+
+    def complete(self, system: str, user: str) -> str:
+        raise NotImplementedError
 
     def classify(self, transcript: Transcript) -> ClassifierResult:
-        body = {
-            "model": self.model,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0, "num_predict": 200},
-            "keep_alive": "30m",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "<transcript>\n" + render_transcript(transcript) + "\n</transcript>"},
-            ],
-        }
-        req = urllib.request.Request(
-            f"{self.url}/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        user = "<transcript>\n" + render_transcript(transcript) + "\n</transcript>"
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                content = json.loads(resp.read())["message"]["content"]
-            return result_from_dict(parse_llm_json(content), self.name)
+            result = result_from_dict(parse_llm_json(self.complete(SYSTEM_PROMPT, user)), self.name)
         except Exception as e:  # network, bad JSON, bad label: never crash a live call
             log.warning("LLM classifier failed (%s); using heuristic fallback", e)
             r = self.fallback.classify(transcript)
             r.source = f"{r.source} (fallback after: {type(e).__name__})"
             return r
+        # Evidence: only what the caller really said. Fields the model missed are filled by the regex extractor.
+        said = caller_text(transcript)
+        grounded = ground_evidence(result.evidence, said)
+        grounded.merge(extract_evidence(said))
+        result.evidence = grounded
+        return result
+
+
+class OllamaClassifier(LLMClassifier):
+    """A local model via Ollama's /api/chat. Transcripts never leave the computer."""
+
+    def __init__(self, url: str = "http://localhost:11434", model: str = "llama3.2:3b",
+                 timeout: float = 20.0, fallback: Classifier | None = None):
+        super().__init__(fallback)
+        self.url, self.model, self.timeout = url.rstrip("/"), model, timeout
+        self.name = f"ollama:{model}"
+
+    def complete(self, system: str, user: str) -> str:
+        reply = post_json(f"{self.url}/api/chat", {
+            "model": self.model,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0, "num_predict": 200},
+            "keep_alive": "30m",
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        }, {}, self.timeout)
+        return reply["message"]["content"]
+
+
+class GeminiClassifier(LLMClassifier):
+    """Google's hosted Gemini API (generateContent). Fast, but transcripts are sent to Google, and on the free
+    tier Google may use them to improve its products. Get a key at https://aistudio.google.com."""
+
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash-lite", timeout: float = 15.0,
+                 fallback: Classifier | None = None, base_url: str = BASE_URL):
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is not set (put it in .env)")
+        super().__init__(fallback)
+        self.api_key, self.model, self.timeout, self.base_url = api_key, model, timeout, base_url.rstrip("/")
+        self.name = f"gemini:{model}"
+
+    def complete(self, system: str, user: str) -> str:
+        reply = post_json(f"{self.base_url}/models/{self.model}:generateContent", {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": user}]}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }, {"x-goog-api-key": self.api_key}, self.timeout)
+        candidates = reply.get("candidates") or []
+        if not candidates:  # e.g. the prompt was blocked: the reply explains why
+            raise RuntimeError(f"no answer from Gemini: {json.dumps(reply)[:300]}")
+        return "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])

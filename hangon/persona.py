@@ -18,12 +18,20 @@ from .models import EVIDENCE_FIELDS, Evidence, Mode, Persona
 GREETING = "Hello? This is {name}'s assistant, calls may be transcribed. Who's calling?"
 
 # What to ask for, in this order, while the evidence checklist is incomplete.
-_STALL_ASKS = {
-    "claimed_org": "Ask exactly which organization and department they are with.",
+_STALL_ASKS_ORG = {
+    "claimed_org": "Ask exactly which organization, company, or department they are with.",
     "payment_method": "Ask exactly how they want the payment made.",
-    "callback_number": "Ask for a number to call them back on, then read it back to check you have it right.",
+    "callback_number": "Ask for a number to call them back on so you can write it down.",
     "urgency_tactic": "Ask what happens if it isn't done today.",
 }
+
+_STALL_ASKS_PERSONAL = {
+    "claimed_org": "Ask for their full name and how they know Margaret.",
+    "payment_method": "Ask exactly how they expect the money or payment to be sent.",
+    "callback_number": "Ask for a phone number where they can be reached right now.",
+    "urgency_tactic": "Ask why this needs to be done immediately.",
+}
+
 _SCREEN_ASKS = {  # used only while that evidence is missing
     "claimed_org": "Ask which organization they are calling from.",
     "callback_number": "Ask for a number where they can be reached.",
@@ -84,13 +92,15 @@ def mode_instructions(p: Persona, mode: Mode) -> str:
     raise ValueError(mode)
 
 
-def turn_guidance(mode: Mode, evidence: Evidence, turn: int) -> str:
+def turn_guidance(mode: Mode, evidence: Evidence, turn: int, is_personal: bool = False) -> str:
     """A short directive for this one turn. Changes every turn, which also stops the model repeating itself."""
     parts: list[str] = []
     missing = [f for f in EVIDENCE_FIELDS if not getattr(evidence, f)]
 
     if mode is Mode.STALL:
-        ask = _STALL_ASKS[missing[0]] if missing else STALL_QUESTIONS[turn % len(STALL_QUESTIONS)]
+        use_personal = is_personal or evidence.claimed_org == "Personal" or not evidence.claimed_org
+        asks_map = _STALL_ASKS_PERSONAL if use_personal else _STALL_ASKS_ORG
+        ask = asks_map[missing[0]] if missing else STALL_QUESTIONS[turn % len(STALL_QUESTIONS)]
         parts.append("Your question this turn: " + ask)
     elif mode is Mode.SCREEN:
         asks = [_SCREEN_ASKS[f] for f in missing if f in _SCREEN_ASKS] + list(_SCREEN_ALWAYS)

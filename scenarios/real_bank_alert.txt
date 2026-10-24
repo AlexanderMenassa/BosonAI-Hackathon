@@ -1,0 +1,6 @@
+# A REAL bank fraud alert: alarming topic, but asks for nothing. Should NOT be a scam (held, not blocked).
+Hello, this is an automated fraud alert from Scotiabank for Margaret.
+We noticed a purchase attempt on her credit card that looked unusual, and we declined it to be safe.
+We will never ask for her PIN, passwords, or one-time codes over the phone.
+Please call the number on the back of her card at her convenience to review the activity.
+Thank you, and have a good day.
