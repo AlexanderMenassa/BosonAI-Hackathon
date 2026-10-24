@@ -4,3 +4,6 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 .idea/
+/hangon.db
+/reports/outbox.jsonl
+/reports/call_1.txt
