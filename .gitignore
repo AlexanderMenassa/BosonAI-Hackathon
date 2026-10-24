@@ -7,3 +7,7 @@
 /hangon.db
 /reports/outbox.jsonl
 /reports/call_1.txt
+
+.env
+.env.local
+.env.*.local
