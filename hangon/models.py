@@ -43,6 +43,55 @@ class Outcome(str, Enum):
     HANGUP_UNSURE = "hangup_unsure"      # caller left before a verdict
 
 
+class Route(str, Enum):
+    PASS = "pass"
+    REJECT = "reject"
+    SCREEN = "screen"
+
+
+class ConnectionState(str, Enum):
+    ARRIVED = "arrived"
+    SCREENING = "screening"
+    RINGING = "ringing"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    MESSAGE_PENDING = "message_pending"
+    ENDED = "ended"
+
+
+class FailureReason(str, Enum):
+    SCREENING_UNAVAILABLE = "screening_unavailable"
+    RECEIVER_UNAVAILABLE = "receiver_unavailable"
+    RING_TIMEOUT = "ring_timeout"
+    MEDIA_UNAVAILABLE = "media_unavailable"
+
+
+class EndReason(str, Enum):
+    REJECTED = "rejected"
+    COMPLETED = "completed"
+    CALLER_HANGUP = "caller_hangup"
+    RECEIVER_HANGUP = "receiver_hangup"
+    DECLINED = "declined"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class IncomingCall:
+    call_id: str
+    request_id: str
+    number: str
+
+
+@dataclass(frozen=True)
+class GatewayEvent:
+    type: str
+    call_id: str
+    event_id: str
+    revision: int
+    state: ConnectionState
+    detail: str = ""
+
+
 EVIDENCE_FIELDS = ("claimed_org", "payment_method", "callback_number", "urgency_tactic")
 
 

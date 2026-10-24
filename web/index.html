@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hang On — call controls</title>
+<style>
+  body{font:16px/1.45 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#18252a}
+  h1{margin-bottom:.2rem}p{margin:.5rem 0 1.3rem}.notice{background:#eaf1f4;padding:1rem;border-radius:.6rem}
+  section{border:1px solid #c9d4d8;border-radius:.6rem;padding:1rem;margin:1rem 0}
+  label{display:block;margin:.6rem 0}input,select,button{font:inherit;padding:.45rem;margin:.2rem}
+  button{cursor:pointer}button:disabled{cursor:default;opacity:.5}
+  #error{color:#a21a1a;min-height:1.5rem}#events{white-space:pre-wrap;background:#f4f6f6;padding:.7rem;min-height:5rem}
+  .status{font-weight:700}
+</style>
+<h1>Hang On</h1>
+<p class="notice">Synthetic caller identities. Browser microphone, Higgs screening, and accepted human audio use real connections. Calls may be transcribed during screening.</p>
+<section>
+  <h2>Private room</h2>
+  <button id="create">Create room as caller</button>
+  <label>Invite code <input id="code" autocomplete="off" placeholder="Paste teammate's code"></label>
+  <label>Join as <select id="role"><option value="receiver">Receiver</option><option value="caller">Caller</option></select></label>
+  <button id="join">Join or reconnect</button>
+  <p>Share the invite code with your teammate. Open this page in a second browser session to join.</p>
+</section>
+<section>
+  <h2>Call</h2>
+  <p>Room: <span id="room">—</span> · Your role: <span id="myrole">—</span> · Receiver: <span id="presence">offline</span></p>
+  <p class="status">Route: <span id="route">—</span> · State: <span id="state">idle</span></p>
+  <p>Audio: <span id="audio-status">idle</span> <button id="play-audio" hidden>Enable sound</button></p>
+  <audio id="remote-audio" autoplay playsinline></audio>
+  <div id="caller-controls">
+    <label>Synthetic test profile <select id="profile"><option value="unknown">Unknown</option><option value="trusted">Trusted</option><option value="blocked">Blocked</option><option value="both">Trusted and blocked</option></select></label>
+    <button id="start">Call</button>
+    <div id="line-controls" hidden><label>Caller line for offline control checks <input id="line" placeholder="Example: Riverside Pharmacy, prescription pickup"></label>
+    <button id="send-line">Send caller line</button></div>
+    <label>Message if receiver unavailable <input id="message" placeholder="Leave a short message"></label>
+    <button id="send-message">Leave message</button>
+  </div>
+  <div id="receiver-controls">
+    <button id="ready">Ready</button><button id="not-ready">Not ready</button>
+    <button id="accept">Accept</button><button id="decline">Decline</button>
+  </div>
+  <button id="end">End call</button>
+  <p id="summary"></p>
+  <p id="assistant-caption"></p>
+  <p id="error" role="alert"></p>
+</section>
+<section><h2>Server events</h2><div id="events" aria-live="polite"></div></section>
+<script src="/call.js"></script>
+</html>

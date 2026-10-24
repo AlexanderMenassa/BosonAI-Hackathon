@@ -20,14 +20,15 @@ from typing import Callable
 
 from .classifier import Classifier
 from .config import Settings
-from .models import Action, ClassifierResult, Decision, Evidence, Label, Mode, Outcome
+from .models import Action, ClassifierResult, Decision, Evidence, Label, Mode, Outcome, Route
 from .rules import looks_like_injection, mentions_high_stakes
 from .store import Store
 
 
 class CallSession:
     def __init__(self, number: str, classifier: Classifier, store: Store, settings: Settings | None = None,
-                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 browser_call_id: str | None = None):
         self.number = number
         self.classifier = classifier
         self.store = store
@@ -47,6 +48,7 @@ class CallSession:
         self.outcome: Outcome | None = None
         self.ended = False
         self.call_id: int | None = None
+        self.browser_call_id = browser_call_id
         self._low_streak = 0
         self.duration: float = 0.0
         self.started_at: float = wall()
@@ -72,12 +74,21 @@ class CallSession:
                 f"turn={self.turns}/{self.cfg.max_turns}" + (f" [{' '.join(flags)}]" if flags else ""))
 
     # ------------------------------------------------------------------ lifecycle
-    def open(self) -> Decision:
+    def admission_route(self) -> Route:
+        """Policy-only entry point for browser calls; no connection or finishing effects."""
         if self.store.is_blocked(self.number):
+            return Route.REJECT
+        if self.store.is_trusted(self.number):
+            return Route.PASS
+        return Route.SCREEN
+
+    def open(self) -> Decision:
+        route = self.admission_route()
+        if route is Route.REJECT:
             self.outcome = Outcome.REJECTED
             self.finish()
             return Decision(Action.REJECT, outcome=Outcome.REJECTED, note="number is on the blocklist")
-        if self.store.is_trusted(self.number):
+        if route is Route.PASS:
             self.outcome = Outcome.FORWARDED_TRUSTED
             self.finish()
             return Decision(Action.FORWARD_TRUSTED, outcome=Outcome.FORWARDED_TRUSTED,
@@ -112,9 +123,12 @@ class CallSession:
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:
-                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK, "legit but high-stakes: not forwarded")
-            self.outcome = Outcome.FORWARDED
-            return Decision(Action.FORWARD, Mode.HANDOFF, Outcome.FORWARDED, note="legit: forwarding")
+                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK, result,
+                                 "legit but high-stakes: not forwarded", action=Action.END)
+            if self.browser_call_id is None:
+                self.outcome = Outcome.FORWARDED
+            return Decision(Action.FORWARD, Mode.HANDOFF, self.verdict, result,
+                            outcome=self.outcome, note="legit: forwarding")
 
         # UNSURE
         if self.capped:
@@ -128,21 +142,28 @@ class CallSession:
         self.finish()
         return Decision(Action.END, outcome=self.outcome, note="caller hung up")
 
-    def finish(self) -> Outcome:
+    def finish(self, outcome: Outcome | None = None, reason_override: str = "") -> Outcome:
         """Persist the call. Idempotent. Blocklists the number only on a scam verdict."""
         if self.ended:
             return self.outcome  # type: ignore[return-value]
+        if outcome is not None:
+            self.outcome = outcome
         self.ended = True
         self.duration = self.elapsed
         self.started_at = self._wall() - self.duration
         if self.outcome is None:
             self.outcome = Outcome.HANGUP_UNSURE
-        reason = self.last_result.reason if self.last_result else ""
+        reason = reason_override or (self.last_result.reason if self.last_result else "")
         if self.outcome in (Outcome.SCAM_ENDED, Outcome.SCAM_HANGUP):
             self.store.block(self.number, reason=f"scam: {reason}")
-        self.call_id = self.store.save_call(
-            self.number, self.started_at, self.started_at + self.duration, self.outcome.value,
-            self.verdict.value, self.evidence.to_dict(), self.transcript, reason)
+        if self.browser_call_id is not None:
+            self.call_id = self.store.complete_call(
+                self.browser_call_id, self.started_at + self.duration, self.outcome.value,
+                self.verdict.value, self.evidence.to_dict(), self.transcript, reason)
+        else:
+            self.call_id = self.store.save_call(
+                self.number, self.started_at, self.started_at + self.duration, self.outcome.value,
+                self.verdict.value, self.evidence.to_dict(), self.transcript, reason)
         return self.outcome
 
     # ------------------------------------------------------------------ internals

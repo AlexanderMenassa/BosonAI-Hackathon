@@ -180,20 +180,43 @@ Estimates below are planning budgets for two people, not verified task durations
 
 Remaining interface details belong to the implementation phases below; closed setup issues do not imply that browser event contracts or new features already exist.
 
-**Next action:** build the incoming-call gateway in Phase 2A.
+**Next action:** integrate browser audio and Higgs handoff in Phase 2B.
 
-### Phase 2A — Build the gateway and two-browser call controls (2–3 hours)
+### Phase 2A — Gateway and two-browser call controls (complete: control-only)
 
-- [ ] Define an incoming-call adapter, a single shared call ID, and gateway/browser event names and payloads for arrival, routing, handoff, failure, and end.
-- [ ] Map existing engine outcomes to explicit `PASS`, `REJECT`, and `SCREEN` connection actions without duplicating policy.
-- [ ] Connect browser test-call arrival to the gateway before creating any Higgs session.
-- [ ] Add caller/receiver room sessions, receiver Ready/offline/busy status, and server-authorized call controls.
-- [ ] Implement ringing for `PASS`, immediate termination for `REJECT`, and reroute to Higgs connection for `SCREEN`.
-- [ ] Verify blocked/trusted paths never open Higgs and unknown callers never reach the receiver before approval.
+- [x] Define an incoming-call adapter, a single shared call ID, and gateway/browser event names and payloads for arrival, routing, handoff, failure, and end.
+- [x] Map existing engine outcomes to explicit `PASS`, `REJECT`, and `SCREEN` connection actions without duplicating policy.
+- [x] Connect browser test-call arrival to the gateway before creating a screening adapter session.
+- [x] Add caller/receiver room sessions, receiver Ready/offline/busy status, and server-authorized call controls.
+- [x] Implement ringing for `PASS`, immediate termination for `REJECT`, and deferred screening for `SCREEN`; require receiver Accept before any human connection attempt.
+- [x] Handle duplicate events, caller hang-up, screening failure, ring timeout, and failed receiver handoff.
+- [x] Verify blocked/trusted paths never start the screening adapter and unknown callers never ring the receiver before engine approval.
 
-**Done when:** the browser can demonstrate all three initial routes and the gateway owns connection changes throughout the call. Trusted and blocked callers bypass Higgs; unknown callers enter screening.
+**Observed:** two independent browser sessions demonstrated all three routes and the gateway's event sequence. The screening and receiver transports in this phase record control operations only. No Higgs session, browser microphone, WebRTC audio, or human audio connection is claimed. Those are Phase 2B checks.
+
+Run the local control demo with the project environment:
+
+```bash
+.venv/bin/python -m hangon.server --port 8765
+```
+
+Open `http://127.0.0.1:8765/` in two browser sessions. Create a room as caller, join its invite code as receiver, then click Ready. The caller can select synthetic trusted, blocked, both-listed, or unknown profiles. For an unknown caller, submit `Hi, this is Riverside Pharmacy calling.` followed by `Margaret's prescription is ready for pickup.` to exercise offline engine approval. The receiver can Accept or Decline; Accept stays at `connecting` because no media bridge is installed, then offers a message after the connection timeout. The default database is temporary and removed when the server stops. This localhost HTTP page is for control checks only; microphone capture and two-device network setup require Phase 2B's HTTPS/WSS and media work.
 
 ### Phase 2B — Integrate two-device audio and Higgs handoff (3–4 hours; critical path)
+
+**Implementation status:** The browser server now contains a WebRTC media bridge and a server-side Higgs audio adapter. Local synthetic peers and a fake Higgs server exercise the audio paths. Live Higgs, two physical devices, and TURN on the intended network still require explicit acceptance checks before Phase 2B can be marked done. Follow issues #5–#9 and #15–#17.
+
+For a step-by-step local key and two-device HTTPS setup, see [Phase 2B live setup](docs/PHASE-2B-SETUP.md).
+
+Run from the project environment after supplying `BOSON_API_KEY` in the ignored local `.env` or process environment. For a shared device URL, use a trusted certificate and a hostname both devices can reach:
+
+```bash
+.venv/bin/python -m hangon.server --host 0.0.0.0 --port 8765 --cert /path/to/fullchain.pem --key-file /path/to/privkey.pem
+```
+
+Set `HANGON_STUN_URL` if needed. For relay access, set `HANGON_TURN_URL` and `HANGON_TURN_SECRET` for a TURN server configured with the same REST shared secret; the backend generates hour-limited credentials. These values and the Boson key stay server-side. Set `HANGON_RELAY_ONLY=1` for a relay-only acceptance run. See `.env.example` for names. An HTTPS page alone does not establish WebRTC connectivity. Open the same `https://<hostname>:8765/` URL on both devices, create and join a room, click Ready on the receiver, then Call on the caller. Use headphones. The browser asks for microphone permission when Ready or Call is clicked. The synthetic caller profile changes routing; it does not authorize receiver controls.
+
+For the explicit acceptance run, record the browser and device on each side, network and TURN route, whether Higgs spoke and transcribed the caller, whether an approved call rang and carried two-way human audio, interruption behavior, and whether End from each side released both microphones. Keep the offline `python scripts/verify.py` result separate from this live record.
 
 - [ ] Serve both role views over a shared HTTPS/WSS deployment; configure reachable media networking and TURN relay support.
 - [ ] Add caller Call/End and receiver Ready/Accept/Decline/End controls, microphone permission handling, and connection status.

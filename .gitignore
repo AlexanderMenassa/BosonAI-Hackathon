@@ -11,3 +11,23 @@ call_*.txt
 .env
 .env.local
 .env.*.local
+hangon.db
+hangon.db-*
+reports/
+
+# Local workspace files
+/work/
+/outputs/
+.DS_Store
+
+# Harness evidence and additional local credential variants
+/artifacts/
+.env.*
+!.env.example
+
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
