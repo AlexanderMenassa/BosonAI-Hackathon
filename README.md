@@ -188,7 +188,7 @@ Remaining interface details belong to the implementation phases below; closed se
 - [ ] Map existing engine outcomes to explicit `PASS`, `REJECT`, and `SCREEN` connection actions without duplicating policy.
 - [ ] Connect browser test-call arrival to the gateway before creating any Higgs session.
 - [ ] Add caller/receiver room sessions, receiver Ready/offline/busy status, and server-authorized call controls.
-- [ ] Implement ringing for `PASS`, immediate termination for `REJECT`, and deferred Higgs connection for `SCREEN`; require receiver Accept before any human audio connection.
+- [ ] Implement ringing for `PASS`, immediate termination for `REJECT`, and reroute to Higgs connection for `SCREEN`.
 - [ ] Handle duplicate events, caller hang-up, screening failure, and failed receiver handoff.
 - [ ] Verify blocked/trusted paths never open Higgs and unknown callers never reach the receiver before approval.
 
