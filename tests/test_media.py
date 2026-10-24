@@ -181,7 +181,8 @@ def test_higgs_screen_configures_audio_and_deduplicates_final_transcript():
                 return await connect(target)
 
             output = OutboundAudio()
-            screen = HiggsScreen(on_turn, on_caption, on_error, "test-key", url, output, opener)
+            screen = HiggsScreen(on_turn, on_caption, on_error, "test-key", url, output, opener,
+                                 voice="voice_walter_test")
             try:
                 await screen.start()
                 screen.feed(b"\x00\x01" * 480)
@@ -193,6 +194,7 @@ def test_higgs_screen_configures_audio_and_deduplicates_final_transcript():
                 assert turns == ["Pharmacy pickup"] and not errors
                 cfg = received[0]["session"]
                 assert cfg["output_modalities"] == ["audio"]
+                assert cfg["audio"]["output"]["voice"] == "voice_walter_test"
                 assert cfg["audio"]["input"]["transcription"]["model"] == "higgs-stt-3.1"
                 assert output.queue.qsize() == 1
             finally:

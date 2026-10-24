@@ -6,6 +6,7 @@ from typing import Callable, Protocol
 from uuid import uuid4
 
 from .classifier import Classifier
+from .config import Settings
 from .engine import CallSession
 from .models import (Action, ConnectionState as State, Decision, EndReason, FailureReason,
                      GatewayEvent, IncomingCall, Outcome, Route)
@@ -31,7 +32,8 @@ class Gateway:
                  receiver: Transport, wall: Callable[[], float] = time.time,
                  clock: Callable[[], float] = time.monotonic,
                  receiver_available: Callable[[], bool] = lambda: True,
-                 ring_timeout: float = 30.0, connect_timeout: float = 30.0):
+                 ring_timeout: float = 30.0, connect_timeout: float = 30.0,
+                 settings: Settings | None = None):
         self.store, self.classifier = store, classifier
         self.screening, self.receiver = screening, receiver
         self.wall = wall
@@ -39,6 +41,7 @@ class Gateway:
         self.receiver_available = receiver_available
         self.ring_timeout = ring_timeout
         self.connect_timeout = connect_timeout
+        self.settings = settings
         self.ring_started: float | None = None
         self.connect_started: float | None = None
         self.pending_reason = ""
@@ -72,7 +75,7 @@ class Gateway:
         if self.incoming and self.state is not State.ENDED:
             raise GatewayError("room is busy")
         self.incoming = IncomingCall(str(uuid4()), request_id, number)
-        self.session = CallSession(number, self.classifier, self.store,
+        self.session = CallSession(number, self.classifier, self.store, self.settings,
                                    browser_call_id=self.incoming.call_id, wall=self.wall,
                                    clock=self.clock)
         self.store.begin_call(self.incoming.call_id, request_id, number, self.session.started_at)
@@ -102,10 +105,16 @@ class Gateway:
             raise GatewayError("call is not screening")
         try:
             decision = self.session.on_caller_turn(text)  # type: ignore[union-attr]
-            self.last_decision = decision
         except Exception:
             self.last_decision = None
             return self._fail(FailureReason.SCREENING_UNAVAILABLE)
+        return self.apply_screening_decision(decision)
+
+    def apply_screening_decision(self, decision: Decision) -> GatewayEvent:
+        """Apply an engine decision, including one produced by background classification."""
+        if self.state is not State.SCREENING:
+            raise GatewayError("call is not screening")
+        self.last_decision = decision
         if decision.action is Action.FORWARD:
             try:
                 self.screening.pause(self.incoming.call_id)  # type: ignore[union-attr]

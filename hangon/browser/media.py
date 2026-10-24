@@ -112,10 +112,11 @@ class OutboundAudio(MediaStreamTrack):
 class HiggsScreen:
     def __init__(self, on_turn: Callable[[str], object], on_caption: Callable[[str], object],
                  on_error: Callable[[str], object], key: str, url: str, output: OutboundAudio,
-                 connect=None, on_interrupt=None):
+                 connect=None, on_interrupt=None, voice: str = "default"):
         self.on_turn, self.on_caption, self.on_error = on_turn, on_caption, on_error
         self.key, self.url, self.output, self.connect = key, url, output, connect
         self.on_interrupt = on_interrupt
+        self.voice = voice
         self.ws = None
         self.task: asyncio.Task | None = None
         self.input: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
@@ -148,7 +149,7 @@ class HiggsScreen:
                           "turn_detection": {"type": "server_vad", "create_response": False,
                                              "interrupt_response": True},
                           "transcription": {"model": "higgs-stt-3.1"}},
-                "output": {"format": {"type": "audio/pcm", "rate": RATE}, "voice": "default"}}}}
+                "output": {"format": {"type": "audio/pcm", "rate": RATE}, "voice": self.voice}}}}
         await self.ws.send(json.dumps(config))
         while True:
             event = json.loads(await asyncio.wait_for(self.ws.recv(), 15))
@@ -295,10 +296,11 @@ class HiggsScreen:
 
 class MediaBridge:
     def __init__(self, turn, caption, failure, key: str, url: str, ice_servers: list[dict] | None = None,
-                 interrupt=None):
+                 interrupt=None, voice: str = "default"):
         self.turn, self.caption, self.failure = turn, caption, failure
         self.key, self.url = key, url
         self.interrupt = interrupt
+        self.voice = voice
         self.configuration = RTCConfiguration(iceServers=[RTCIceServer(**item) for item in (ice_servers or [])])
         self.peers: dict[str, RTCPeerConnection] = {}
         self.outputs: dict[str, OutboundAudio] = {}
@@ -363,7 +365,8 @@ class MediaBridge:
             raise RuntimeError("caller audio is not ready")
         self.route = "screen"
         self.screen = HiggsScreen(self.turn, self.caption, self.failure, self.key,
-                                 self.url, self.outputs["caller"], on_interrupt=self.interrupt)
+                                 self.url, self.outputs["caller"], on_interrupt=self.interrupt,
+                                 voice=self.voice)
         try:
             await self.screen.start()
         except Exception:

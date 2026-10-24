@@ -68,6 +68,9 @@
             <h3>Block list</h3><ul id="blocked-list" class="contact-list"><li class="empty-list">No numbers yet</li></ul>
           </div>
         </details>
+        <section class="module" id="receiver-inbox" aria-label="Screening messages" hidden>
+          <div class="module-body"><h3>Screening messages</h3><p class="hint">Review unsure calls before deciding whether to call back. Use a number you verify yourself for sensitive matters.</p><div id="receiver-messages" aria-live="polite"></div></div>
+        </section>
         <details class="module">
           <summary><span class="module-icon">◎</span><span><strong>Call details</strong><small>Status and screening</small></span><span class="chevron">⌄</span></summary>
           <div class="module-body"><p>Route <strong id="route">—</strong> · State <strong id="state">idle</strong></p><p id="summary"></p><p id="assistant-caption"></p><div id="line-controls" hidden><label for="line">Offline caller line</label><input id="line" placeholder="Riverside Pharmacy calling"><button id="send-line" class="wide-button secondary" type="button">Send line</button></div><h3>Recent events</h3><div id="events" class="event-list" aria-live="polite">No activity yet</div></div>

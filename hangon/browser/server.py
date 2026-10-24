@@ -25,8 +25,9 @@ from ..classifier import Classifier, HeuristicClassifier
 from ..config import Settings
 from ..gateway import Gateway, GatewayError
 from .media import MediaBridge, screening_error_reason
-from ..models import Action, ClassifierResult, ConnectionState as State, FailureReason, Label, Mode
+from ..models import Action, ClassifierResult, ConnectionState as State, FailureReason, Label, Mode, Outcome, Route
 from ..persona import known_facts, turn_guidance
+from ..pipeline import TurnPipeline
 from ..sim import make_classifier
 from ..store import Store
 
@@ -123,7 +124,8 @@ class Room:
     def __init__(self, code: str, store: Store, ring_timeout: float = 30.0,
                  connect_timeout: float = 30.0, live_media: bool = False,
                  boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None,
-                 classifier: Classifier | None = None, call_log_dir: Path | None = None):
+                 classifier: Classifier | None = None, call_log_dir: Path | None = None,
+                 settings: Settings | None = None):
         self.code = code
         self.store = store
         self.lock = asyncio.Lock()
@@ -132,7 +134,8 @@ class Room:
         self.screening = ControlTransport()
         self.receiver_transport = LiveReceiverTransport(self) if live_media else ControlTransport()
         self.media = (MediaBridge(self._on_turn, self._on_caption, self._on_media_failure,
-                                  boson_key, boson_url, ice_servers, self._on_interrupt) if live_media else None)
+                                  boson_key, boson_url, ice_servers, self._on_interrupt,
+                                  voice=settings.higgs_voice if settings else "default") if live_media else None)
         self.media_started = 0.0
         self.assistant_caption = ""
         self.screening_issue = ""
@@ -141,9 +144,13 @@ class Room:
         self.call_log_dir = call_log_dir
         self.call_log_path: Path | None = None
         self.logged_outcome = False
+        self.pipeline: TurnPipeline | None = None
+        self.late_task: asyncio.Task | None = None
+        self.receiver_messages: list[dict] = []
         self.gateway = Gateway(store, SafeBrowserClassifier(classifier or HeuristicClassifier()), self.screening,
                                self.receiver_transport, receiver_available=self.receiver_available,
-                               ring_timeout=ring_timeout, connect_timeout=connect_timeout)
+                               ring_timeout=ring_timeout, connect_timeout=connect_timeout,
+                               settings=settings)
 
     def receiver_available(self) -> bool:
         return bool(self.receiver and self.receiver.socket and self.receiver.ready and
@@ -191,7 +198,27 @@ class Room:
             "relay_only": os.environ.get("HANGON_RELAY_ONLY") == "1",
             "trusted_numbers": self.store.trusted_list() if role == "receiver" else [],
             "blocked_numbers": self.store.blocklist() if role == "receiver" else [],
+            "receiver_messages": self.receiver_messages if role == "receiver" else [],
         }
+
+    def _receiver_message(self) -> dict | None:
+        g = self.gateway
+        s = g.session
+        if not s or g.route is not Route.SCREEN or not g.incoming:
+            return None
+        if s.outcome in (Outcome.SCAM_ENDED, Outcome.SCAM_HANGUP):
+            reason = s.last_result.reason if s.last_result else "Screening identified scam behavior."
+            quotes = [quote for _, quote in getattr(s.last_result, "behaviours", [])[:2]]
+            if quotes:
+                reason += " Caller said: " + "; ".join(f'“{quote}”' for quote in quotes)
+            return {"call_id": g.incoming.call_id, "kind": "scam", "number": g.incoming.number,
+                    "detail": reason, "blocked": self.store.is_blocked(g.incoming.number)}
+        if s.verdict is Label.UNSURE and s.outcome in (Outcome.MESSAGE_TAKEN, Outcome.HANGUP_UNSURE):
+            said = [text for who, text in s.transcript if who == "caller"]
+            summary = s.caller_summary or (" ".join(said)[:500] if said else "No conversation was captured.")
+            return {"call_id": g.incoming.call_id, "kind": "unsure", "number": g.incoming.number,
+                    "detail": summary, "blocked": False}
+        return None
 
     async def _on_turn(self, line: str) -> None:
         async with self.lock:
@@ -201,8 +228,11 @@ class Room:
             call_id = g.incoming.call_id
             self._log(f"caller> {line}")
             started = time.monotonic()
-            await asyncio.to_thread(g.caller_turn, line)
-            decision = g.last_decision
+            if self.pipeline is None or self.pipeline.session is not g.session:
+                self.pipeline = TurnPipeline(g.session)
+                self.late_task = asyncio.create_task(self._late_decisions(self.pipeline, call_id))
+            decision = await self.pipeline.submit(line)
+            g.apply_screening_decision(decision)
             if g.session and g.session.last_result:
                 result = g.session.last_result
                 self._log(f"  [{g.session.status_line()}] {result.reason} "
@@ -224,6 +254,37 @@ class Room:
                 elif g.state in (State.ENDED, State.MESSAGE_PENDING):
                     await self._close_media()
             await self.broadcast()
+
+    async def _late_decisions(self, pipeline: TurnPipeline, call_id: str) -> None:
+        try:
+            while True:
+                decision = await pipeline.late.get()
+                # Let the provisional sentence finish before requesting a closing line.
+                screen = self.media.screen if self.media and self.media.call_id == call_id else None
+                if screen:
+                    await screen.finish_reply()
+                async with self.lock:
+                    g = self.gateway
+                    if (self.pipeline is not pipeline or not g.incoming or
+                            g.incoming.call_id != call_id or g.state is not State.SCREENING):
+                        continue
+                    g.apply_screening_decision(decision)
+                    self._log(f"[{decision.action.value}] {decision.note}")
+                    if screen and self.media and self.media.screen is screen and decision.mode:
+                        await screen.speak(decision.mode)
+                        await screen.finish_reply()
+                    if self.media and g.state is State.RINGING:
+                        self.media.pause_screen()
+                    elif self.media and g.state in (State.ENDED, State.MESSAGE_PENDING):
+                        await self._close_media()
+                    await self.broadcast()
+                    if g.state is not State.SCREENING:
+                        return
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self.late_task is asyncio.current_task():
+                self.late_task = None
 
     async def _on_caption(self, line: str) -> None:
         if self.gateway.state is State.SCREENING:
@@ -278,12 +339,20 @@ class Room:
             await self.media.close()
 
     async def broadcast(self) -> None:
+        if (self.gateway.state is not State.SCREENING and self.late_task and
+                self.late_task is not asyncio.current_task()):
+            self.late_task.cancel()
+            self.late_task = None
         if (self.gateway.state is State.ENDED and self.gateway.session and
                 self.gateway.session.outcome and not self.logged_outcome):
             blocked = self.store.is_blocked(self.gateway.incoming.number)
             self._log(f"=== call over: outcome={self.gateway.session.outcome.value}, "
                       f"number {'BLOCKED' if blocked else 'not blocked'} ===")
             self.logged_outcome = True
+            message = self._receiver_message()
+            if message:
+                self.receiver_messages.append(message)
+                self.receiver_messages = self.receiver_messages[-20:]
         for participant in (self.caller, self.receiver):
             if participant and participant.socket:
                 try:
@@ -328,6 +397,10 @@ class Room:
                 if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
                     raise GatewayError("invalid request_id")
                 g.arrive(request_id, number)
+                if self.late_task:
+                    self.late_task.cancel()
+                self.pipeline = None
+                self.late_task = None
                 self.assistant_caption = ""
                 self.screening_issue = ""
                 self.asked.clear()
@@ -446,7 +519,8 @@ class Hub:
     def __init__(self, store: Store, ring_timeout: float = 30.0,
                  connect_timeout: float = 30.0, live_media: bool = False,
                  boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None,
-                 classifier_factory=None, call_log_dir: Path | None = None):
+                 classifier_factory=None, call_log_dir: Path | None = None,
+                 settings: Settings | None = None):
         self.store = store
         self.ring_timeout = ring_timeout
         self.connect_timeout = connect_timeout
@@ -454,6 +528,7 @@ class Hub:
         self.ice_servers = ice_servers or []
         self.classifier_factory = classifier_factory or HeuristicClassifier
         self.call_log_dir = call_log_dir
+        self.settings = settings
         self.rooms: dict[str, Room] = {}
         self.lock = asyncio.Lock()
 
@@ -464,7 +539,7 @@ class Hub:
                 code = secrets.token_urlsafe(6)
                 room = Room(code, self.store, self.ring_timeout, self.connect_timeout,
                             self.live_media, self.boson_key, self.boson_url, self.ice_servers,
-                            self.classifier_factory(), self.call_log_dir)
+                            self.classifier_factory(), self.call_log_dir, self.settings)
                 room.media_ice_servers = self.ice_servers
                 self.rooms[code] = room
                 role = "caller"
@@ -549,7 +624,7 @@ async def run(host: str, port: int, db_path: str, ring_timeout: float = 30.0,
     hub = Hub(store, ring_timeout, connect_timeout, True,
               settings.boson_api_key, settings.boson_url, ice_servers,
               lambda: make_classifier(classifier_name, settings),
-              WEB.parent / "artifacts" / "call-logs")
+              WEB.parent / "artifacts" / "call-logs", settings)
     tls = None
     if cert and key_file:
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

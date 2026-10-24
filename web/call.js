@@ -31,13 +31,33 @@ function renderList(id, entries, listName) {
     const title = document.createElement("strong"), number = document.createElement("small");
     const remove = document.createElement("button");
     name.className = "contact-name";
-    title.textContent = entry.label || (listName === "blocked" ? entry.reason : "") || formatNumber(entry.number);
+    title.textContent = listName === "blocked" ? formatNumber(entry.number) : entry.label || formatNumber(entry.number);
     number.textContent = formatNumber(entry.number);
     remove.textContent = "Remove";
     remove.type = "button";
     remove.setAttribute("aria-label", `Remove ${entry.number} from ${listName} list`);
     remove.onclick = () => send({type:"list.remove", list:listName, number:entry.number});
-    name.append(title, number); row.append(name, remove); target.append(row);
+    name.append(title);
+    if (listName !== "blocked") name.append(number);
+    row.append(name, remove); target.append(row);
+  }
+}
+
+function renderReceiverMessages(entries) {
+  const target = $("receiver-messages");
+  target.replaceChildren();
+  if (!entries.length) { target.textContent = "No screening messages yet."; return; }
+  for (const entry of [...entries].reverse()) {
+    const card = document.createElement("article"), heading = document.createElement("strong");
+    const number = document.createElement("p"), detail = document.createElement("p");
+    card.className = `screening-note ${entry.kind}`;
+    heading.textContent = entry.kind === "scam" ? "Likely scam" : "Unsure call";
+    number.textContent = `Caller number: ${formatNumber(entry.number)}`;
+    detail.textContent = entry.kind === "scam" ? `Why it was flagged: ${entry.detail}` : `Conversation summary: ${entry.detail}`;
+    card.append(heading, number, detail);
+    const status = document.createElement("small");
+    status.textContent = entry.kind === "scam" ? "Number added to block list" : "Number not blocked · Decide whether to call back";
+    card.append(status); target.append(card);
   }
 }
 
@@ -49,6 +69,8 @@ function updateTimer() {
 
 function render() {
   const state = snapshot?.state || "idle", inCall = !!active(), hasCall = !!snapshot?.call_id;
+  const currentScreeningMessage = role === "receiver" && state === "ended" ?
+    [...(snapshot?.receiver_messages || [])].reverse().find(entry => entry.call_id === snapshot.call_id) : null;
   const messageReason = [...(snapshot?.events || [])].reverse().find(e => e.type === "call.message_requested")?.detail;
   const messageDetail = ({screening_unavailable:"Screening audio failed",
     media_unavailable:"Audio connection failed", receiver_unavailable:"The receiver is unavailable",
@@ -78,7 +100,7 @@ function render() {
   const phases = {idle:"READY WHEN YOU ARE", screening:"SCREENING CALL", ringing:role === "receiver" ? "INCOMING CALL" : "RINGING RECEIVER", connecting:"CONNECTING AUDIO", connected:"ON A CALL", message_pending:"MESSAGE REQUESTED", ended:"CALL ENDED"};
   $("call-phase").textContent = !role ? "SET UP A ROOM TO BEGIN" : !hasCall ? "READY WHEN YOU ARE" : phases[state] || state.toUpperCase();
   $("display-number").textContent = snapshot?.caller_number ? formatNumber(snapshot.caller_number) : role === "receiver" ? "No incoming call" : "Hang On";
-  $("call-detail").textContent = !role ? "A private call space for two browsers" : !hasCall ? role === "receiver" ? "Be ready to receive calls" : "Enter a test number to call" : state === "screening" ? "Your call is being screened" : state === "ringing" ? role === "receiver" ? "Tap Accept to connect" : "Waiting for the receiver" : state === "connected" ? "Connected through browser audio" : state === "message_pending" ? screeningIssue || messageDetail : state === "ended" ? "The call has finished" : "Getting ready";
+  $("call-detail").textContent = !role ? "A private call space for two browsers" : !hasCall ? role === "receiver" ? "Be ready to receive calls" : "Enter a test number to call" : state === "screening" ? "Your call is being screened" : state === "ringing" ? role === "receiver" ? "Tap Accept to connect" : "Waiting for the receiver" : state === "connected" ? "Connected through browser audio" : state === "message_pending" ? screeningIssue || messageDetail : state === "ended" ? currentScreeningMessage?.kind === "scam" ? `Likely scam from ${formatNumber(currentScreeningMessage.number)}. ${currentScreeningMessage.detail}` : currentScreeningMessage ? `Screening message from ${formatNumber(currentScreeningMessage.number)}: ${currentScreeningMessage.detail}` : "The call has finished" : "Getting ready";
   if (snapshot?.state === "connected") $("remote-audio").muted = false;
   $("summary").textContent = snapshot?.summary ? `Screening summary: ${snapshot.summary}` : "";
   $("assistant-caption").textContent = snapshot?.assistant_caption ?
@@ -87,6 +109,7 @@ function render() {
   $("caller-controls").hidden = role !== "caller" || inCall;
   $("receiver-controls").hidden = role !== "receiver";
   $("contacts-module").hidden = role === "caller";
+  $("receiver-inbox").hidden = role !== "receiver";
   $("add-number").disabled = role !== "receiver";
   $("start").disabled = role !== "caller" || !snapshot || inCall;
   $("line-controls").hidden = !snapshot?.synthetic_mode;
@@ -105,6 +128,7 @@ function render() {
   $("events").textContent = (snapshot?.events || []).map(e => `${e.revision}. ${e.type.replaceAll("."," ")} ${e.detail || ""}`).join("\n") || "No activity yet";
   renderList("trusted-list", snapshot?.trusted_numbers || [], "trusted");
   renderList("blocked-list", snapshot?.blocked_numbers || [], "blocked");
+  renderReceiverMessages(snapshot?.receiver_messages || []);
   updateTimer();
 }
 

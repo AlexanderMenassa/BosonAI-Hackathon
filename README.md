@@ -210,6 +210,8 @@ For a step-by-step local key and two-device HTTPS setup, see [Phase 2B live setu
 
 Run from the project environment after supplying `BOSON_API_KEY` in the ignored local `.env` or process environment. For a shared device URL, use a trusted certificate and a hostname both devices can reach:
 
+Browser screening uses `HIGGS_VOICE` from the same server environment as the terminal voice demo. The Walter reference clip in this repository must first be registered with `python -m hangon.voices create versatile-v05-s1.mp3 --text-file versatile-v05-s1.txt --title Walter`; set `HIGGS_VOICE` to the returned voice ID. Without a registered ID, the browser uses the Higgs default voice.
+
 ```bash
 .venv/bin/python -m hangon.server --host 0.0.0.0 --port 8765 --cert /path/to/fullchain.pem --key-file /path/to/privkey.pem
 ```
