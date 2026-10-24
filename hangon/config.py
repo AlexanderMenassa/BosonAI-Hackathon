@@ -34,6 +34,7 @@ class Settings:
     scam_exit: float = 0.6       # score must stay below this to leave SCAM...
     scam_exit_turns: int = 2      # ...for this many consecutive turns
     legit_enter: float = 0.15
+    benign_turns: int = 4
 
     # Local classifier
     ollama_url: str = "http://localhost:11434"
@@ -73,6 +74,7 @@ class Settings:
             scam_exit=float(e.get("HANGON_SCAM_EXIT", 0.7)),
             scam_exit_turns=int(e.get("HANGON_SCAM_EXIT_TURNS", 2)),
             legit_enter=float(e.get("HANGON_LEGIT_ENTER", 0.3)),
+            benign_turns=int(e.get("HANGON_BENIGN_TURNS", 4)),
             ollama_url=e.get("OLLAMA_URL", "http://localhost:11434"),
             ollama_model=e.get("OLLAMA_MODEL", "llama3.2:3b"),
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),

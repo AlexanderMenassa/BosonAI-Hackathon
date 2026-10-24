@@ -31,6 +31,18 @@ from .persona import base_prompt, build_instructions, exact_line, greeting
 REPEAT_SIMILARITY = 0.8   # replies at least this similar to an earlier line count as repeats
 OPENING_WORDS = 3         # a reply that starts with the same first words as an earlier one also counts as a repeat
 
+# A leading greeting sentence ("Oh, hello there. ...", "Hello? ...") is wrong mid-call, whatever the prompt says.
+_LEADING_GREETING = re.compile(r"^\s*(?:oh,?\s+)?(?:hello|hi|hey)(?:\s+there)?\s*[.!?]+\s+(?=\S)", re.I)
+_GREETING_ONLY = re.compile(r"^(?:oh )?(?:hello|hi|hey)(?: there)?$")
+
+# Used only when Higgs repeats itself twice in a row. Unlike ScriptedAgent's screening lines ("Sorry, dear, who is
+# this?"), these ask for nothing the caller already gave, so a fallback never makes her seem to forget the call.
+NEUTRAL_FALLBACKS = (
+    "Sorry, dear, the line crackled just then. Could you say that again?",
+    "I'm sorry, dear, I missed the end of that. Could you repeat it for me?",
+    "Oh, one moment, dear, I dropped my glasses. What was that last part?",
+)
+
 
 class AgentError(RuntimeError):
     pass
@@ -94,6 +106,8 @@ class HiggsTextAgent:
         self.ws = None
         self._configured = False
         self._said: list[str] = []                     # everything the agent has said this call
+        self._heard: list[str] = []                    # everything the caller said before the current turn
+        self._neutral = itertools.cycle(NEUTRAL_FALLBACKS)
         self._fallback = ScriptedAgent(persona)        # used only if Higgs keeps repeating itself
 
     # ---- lifecycle
@@ -115,7 +129,9 @@ class HiggsTextAgent:
     async def say(self, mode: Mode, caller_text: str | None = None, guidance: str = "") -> str:
         if self.ws is None:
             raise AgentError("call start() first")
-        instructions = build_instructions(self.p, mode, guidance, caller_text)
+        instructions = build_instructions(self.p, mode, guidance, caller_text, self._heard)
+        if caller_text:
+            self._heard.append(caller_text)     # recapped on later turns; never trust server memory alone
         self._log(f"mode={mode.value}\n      instructions: {instructions}")
 
         if caller_text is not None:
@@ -123,17 +139,18 @@ class HiggsTextAgent:
                 "type": "message", "role": "user", "content": [{"type": "input_text", "text": caller_text}]}})
 
         fixed = exact_line(self.p, mode) is not None      # fixed lines are word for word: no opener check
-        text = await self._respond(instructions)
+        text = self._clean(await self._respond(instructions), fixed)
         if self._is_repeat(text, check_opening=not fixed):
             self._log("REPEAT detected; retrying once with a firmer instruction")
             avoid = self._opening(text)
             hint = f" Do not begin with the words '{avoid}'." if avoid and not fixed else ""
-            text = await self._respond(instructions + " IMPORTANT: your last reply repeated something you had "
-                                       "already said or started the same way as an earlier reply. Write a "
-                                       "completely new reply that follows this turn's instructions." + hint)
+            text = self._clean(await self._respond(
+                instructions + " IMPORTANT: your last reply repeated something you had already said or started "
+                "the same way as an earlier reply. Write a completely new reply that follows this turn's "
+                "instructions." + hint), fixed)
             if self._is_repeat(text, check_opening=not fixed):
-                text = await self._fallback.say(mode, caller_text)
-                self._log(f"still repeating; using scripted fallback line: {text!r}")
+                text = await self._fallback.say(mode, caller_text) if fixed else next(self._neutral)
+                self._log(f"still repeating; using fallback line: {text!r}")
         self._said.append(text)
         return text
 
@@ -143,6 +160,15 @@ class HiggsTextAgent:
             await self._configure(base_prompt(self.p))
         await self._send({"type": "response.create", "response": {"instructions": instructions}})
         return await self._collect_text()
+
+    @staticmethod
+    def _clean(text: str, fixed: bool) -> str:
+        """Drop a leading greeting sentence from a mid-call reply: 'Oh, hello there. You mentioned X...' becomes
+        'You mentioned X...'. Fixed lines (including the opening greeting) are left exactly as they are."""
+        if fixed:
+            return text
+        stripped = _LEADING_GREETING.sub("", text, count=1).strip()
+        return (stripped[:1].upper() + stripped[1:]) if stripped != text.strip() and stripped else text
 
     @staticmethod
     def _norm(t: str) -> str:
@@ -157,6 +183,8 @@ class HiggsTextAgent:
         if not text.strip():
             return True  # an empty reply is as useless as a repeat
         new = self._norm(text)
+        if check_opening and _GREETING_ONLY.match(new):
+            return True        # nothing but "Oh, hello there." mid-call
         if any(difflib.SequenceMatcher(None, new, self._norm(old)).ratio() >= REPEAT_SIMILARITY for old in self._said):
             return True
         # Same stock opening as an earlier reply ("Oh, hello there. ..."), even though the rest differs.

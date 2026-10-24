@@ -62,6 +62,7 @@ class VoiceCall:
         self.mode: Mode | None = None               # the mode of the reply most recently requested
         self.done = asyncio.Event()
         self.turns: asyncio.Queue[str] = asyncio.Queue()
+        self.asked: set[str] = set()                # topics already asked about this call (once each)
         self.seen_items: set[str] = set()           # transcript item ids already turned into caller turns
         self.loop: asyncio.AbstractEventLoop | None = None
 
@@ -100,8 +101,9 @@ class VoiceCall:
             },
         }}
 
-    async def speak(self, mode: Mode, guidance: str = "", caller_text: str | None = None) -> None:
-        instructions = build_instructions(self.persona, mode, guidance, caller_text)
+    async def speak(self, mode: Mode, guidance: str = "", caller_text: str | None = None,
+                    history: list[str] | None = None) -> None:
+        instructions = build_instructions(self.persona, mode, guidance, caller_text, history or ())
         self.dbg(f"mode={mode.value} instructions: {instructions}")
         # One reply at a time: wait for the previous one to finish (or be cancelled by an interruption).
         for _ in range(100):
@@ -263,11 +265,12 @@ class VoiceCall:
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
             heard = [t for w, t in self.session.transcript if w == "caller"]
-            guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence, heard))
+            guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence, heard),
+                                       self.asked)
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")
-            await self.speak(d.mode, guidance, text)
+            await self.speak(d.mode, guidance, text, heard[:-1])
 
     async def _finish_after_playback(self) -> None:
         """Let the last line finish playing, then forward or end the call."""

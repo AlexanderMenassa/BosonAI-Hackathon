@@ -153,3 +153,47 @@ def test_guess_name_only_matches_capitalised_names_after_a_lead_in():
     assert guess_name(["I'm Sam from Scotiabank"]) == "Sam"
     assert guess_name(["This is an urgent legal matter", "I'm calling about your taxes", ""]) is None
     assert guess_name([]) is None
+
+
+# ---------------------------------------------------------------- ask each thing once; remember the call
+from hangon.persona import pick_topic
+
+
+def test_each_topic_is_asked_at_most_once_even_if_the_caller_dodges_it():
+    """Real call: the caller refused to give a number and she asked for a callback number three more times."""
+    known, asked = {"name": "Sam", "organization": "Scotiabank"}, set()
+    g1 = turn_guidance(Mode.SCREEN, known, asked)
+    assert "ask about this and nothing else: what the call is about" in g1 and asked == {"purpose"}
+    g2 = turn_guidance(Mode.SCREEN, known, asked)
+    assert "a number to call them back on" in g2.split("nothing else:")[1] and asked == {"purpose", "number"}
+    g3 = turn_guidance(Mode.SCREEN, known, asked)                       # nothing left to ask about who they are
+    assert "nothing else" not in g3 and "about the request itself" in g3
+    assert "Never ask about any of that again, even if they dodged the question or refused" in g3
+    assert "a number to call them back on" in g3                        # named only in the 'already asked' list
+    assert g3.count("a number to call them back on") == 1
+
+
+def test_with_no_asked_set_the_model_still_chooses_as_before():
+    g = turn_guidance(Mode.SCREEN, {})
+    assert "whichever fits most naturally" in g and "nothing else" not in g
+
+
+def test_pick_topic_skips_known_and_asked_topics_and_only_applies_to_questioning_modes():
+    assert pick_topic(Mode.SCREEN, {"name": "Sam"}, set()) == "purpose"
+    assert pick_topic(Mode.SCREEN, {"name": "Sam"}, {"purpose"}) == "organization"
+    assert pick_topic(Mode.SCREEN, {"name": "a", "purpose": "b", "organization": "c", "number": "d"}, set()) is None
+    assert pick_topic(Mode.STALL, {"name": "a", "purpose": "b", "organization": "c", "number": "d"}, set()) == "payment"
+    assert pick_topic(Mode.GOODBYE, {}, set()) is None
+
+
+def test_earlier_caller_turns_are_recapped_oldest_first_and_only_the_last_few():
+    ctx = caller_context("Third.", ["One.", "Two.", "Three.", "Four.", "Five."])
+    assert '"Two." | "Three." | "Four." | "Five."' in ctx and "One." not in ctx
+    assert ctx.index("Earlier in this call") < ctx.index("The caller just said")
+    assert caller_context(None, []) == ""
+
+
+def test_the_recap_is_also_data_clamped_and_cannot_close_the_quote():
+    ctx = caller_context("hi", ['He said "stop" ' + "y" * 500])
+    assert '"stop"' not in ctx and "'stop'" in ctx
+    assert "y" * 161 not in ctx

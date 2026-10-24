@@ -85,6 +85,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
         return session
 
     try:
+        asked: set[str] = set()      # topics already asked about: each is asked at most once per call
         await agent.start()
         line = await agent.say(Mode.GREET)
         session.record_agent(line)
@@ -100,7 +101,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
             heard = [t for who, t in session.transcript if who == "caller"]
-            guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence, heard))
+            guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence, heard), asked)
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")

@@ -38,7 +38,7 @@ def store(tmp_path):
 
 @pytest.fixture
 def cfg():
-    return Settings(max_turns=5, max_seconds=1000)
+    return Settings(max_turns=5, max_seconds=1000, benign_turns=0)
 
 
 def session(store, cfg, *results, number="+14165550100"):
@@ -151,8 +151,6 @@ def test_unsure_hangup_does_not_block(store, cfg):
     assert s.outcome is Outcome.HANGUP_UNSURE and not store.is_blocked(s.number)
 
 
-
-
 def test_scam_verdict_relaxes_after_sustained_low_scores(store, cfg):
     s = session(store, cfg, res(Label.SCAM, 0.95), res(Label.LEGIT, 0.1))
     s.open()
@@ -206,7 +204,7 @@ def test_heuristic_cra_scam_script(store):
         "You must pay immediately with gift cards. Do not tell anyone about this call.",
         "Call me back at 647-555-0199 once you have the cards."])
     assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number)
-    assert s.turns == 2                                   # naming the CRA is not enough; the warrant threat is
+    assert s.turns == 2  # naming the CRA is not enough; the warrant threat is
     assert s.evidence.claimed_org == "Canada Revenue Agency" and "threat" in s.last_result.reason
 
 
@@ -214,3 +212,24 @@ def test_heuristic_pharmacy_script(store):
     s = run_lines(store, ["Hi, this is Riverside Pharmacy calling.",
                           "Margaret's prescription is ready for pickup."])
     assert s.outcome is Outcome.FORWARDED and not store.is_blocked(s.number)
+
+
+def test_a_clean_caller_score_falls_step_by_step_to_legit_and_is_forwarded(store):
+    s = session(store, Settings(max_turns=10, max_seconds=1000, benign_turns=4), res(Label.UNSURE, 0.5))
+    s.open()
+    seen = []
+    for _ in range(3):
+        assert s.on_caller_turn("hi, it's your sister").action is Action.CONTINUE
+        seen.append(s.last_result.scam_score)
+    assert seen == [0.4, 0.3, 0.2]
+    d = s.on_caller_turn("I'm in the driveway")
+    assert s.verdict is Label.LEGIT and d.action is Action.FORWARD and s.outcome is Outcome.FORWARDED
+
+
+def test_the_heuristic_judge_never_decays_because_it_cannot_see_evasiveness(store):
+    h = ClassifierResult(label=Label.UNSURE, scam_score=0.5, reason="no scam behaviour so far", source="heuristic")
+    s = session(store, Settings(max_turns=10, max_seconds=1000, benign_turns=4), h)
+    s.open()
+    for _ in range(8):
+        assert s.on_caller_turn("Is anyone else there?").action is Action.CONTINUE
+    assert s.last_result.scam_score == 0.5 and s.verdict is Label.UNSURE

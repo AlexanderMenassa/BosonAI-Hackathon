@@ -16,9 +16,10 @@ Lifecycle, as driven by whatever transport sits on top (simulator, phone line, .
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Callable
 
-from .classifier import Classifier
+from .classifier import SCORE_NOTHING_YET, SCORE_ORDINARY, Classifier
 from .config import Settings
 from .models import Action, ClassifierResult, Decision, Evidence, Label, Mode, Outcome, Route
 from .rules import looks_like_injection, mentions_high_stakes
@@ -50,6 +51,7 @@ class CallSession:
         self.call_id: int | None = None
         self.browser_call_id = browser_call_id
         self._low_streak = 0
+        self._clean_turns = 0
         self.duration: float = 0.0
         self.started_at: float = wall()
 
@@ -98,6 +100,31 @@ class CallSession:
     def record_agent(self, text: str) -> None:
         self.transcript.append(("agent", text))
 
+    def _apply_benign_decay(self, r: ClassifierResult) -> ClassifierResult:
+        """Lower the score while a call stays clean, so an ordinary caller can reach LEGIT without a stated purpose.
+
+        A turn is clean when the judge saw no behaviour at all, the call has never been high-stakes, and nobody
+        has tried to steer the screening. Each clean turn lowers the score a step; after `benign_turns` of them
+        it reaches LEGIT. Done here, in code, so the agent has no say in it.
+
+        Only an LLM judge's "clean" counts. The regex heuristic cannot tell a friendly caller from one who dodges
+        every question, so its turns neither advance nor reset the streak.
+        """
+        n = self.cfg.benign_turns
+        if r.source.startswith("heuristic"):
+            return r
+        clean = (r.label is Label.UNSURE and r.scam_score <= SCORE_NOTHING_YET and not r.high_stakes
+                 and not self.high_stakes and not self.injection_attempt)
+        self._clean_turns = self._clean_turns + 1 if clean else 0
+        if n <= 0 or not clean:
+            return r
+        if self._clean_turns >= n:
+            return replace(r, label=Label.LEGIT, scam_score=SCORE_ORDINARY,
+                           reason=f"no scam behaviour in {self._clean_turns} turns of ordinary conversation")
+        step = (SCORE_NOTHING_YET - SCORE_ORDINARY) / n
+        return replace(r, scam_score=round(r.scam_score - step * self._clean_turns, 2),
+                       reason=f"no scam behaviour so far ({self._clean_turns}/{n} clean turns)")
+
     def on_caller_turn(self, text: str) -> Decision:
         if self.ended:
             raise RuntimeError("call already finished")
@@ -112,6 +139,8 @@ class CallSession:
         if looks_like_injection(text):
             self.injection_attempt = True
         self.high_stakes = self.high_stakes or result.high_stakes or mentions_high_stakes(text)
+        result = self._apply_benign_decay(result)
+        self.last_result = result
         self._update_verdict(result)
 
         if self.verdict is Label.SCAM:

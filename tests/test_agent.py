@@ -5,7 +5,7 @@ import json
 import pytest
 from websockets.asyncio.server import serve
 
-from hangon.agent import AgentError, HiggsTextAgent
+from hangon.agent import NEUTRAL_FALLBACKS, AgentError, HiggsTextAgent
 from hangon.models import Mode, Persona
 
 
@@ -203,15 +203,58 @@ def test_short_replies_have_no_opening_to_compare():
 
 
 def test_a_repeated_opening_is_retried_and_the_retry_names_the_words_to_avoid():
+    a, b = "Oh my goodness, dear. Which branch are you at?", "Oh my goodness, dear. And what is your name?"
+    fresh = "Electronics? No, I don't think so. Is that on my Visa?"
     received, replies = converse(
         [(Mode.GREET, None, ""), (Mode.SCREEN, "I'm Sam from Scotiabank.", "g1"),
          (Mode.SCREEN, "Did you make two purchases?", "g2")],
-        server_replies=["Hello?", STOCK[0], STOCK[1], "Electronics? No, I don't think so. Which branch are you at?"])
-    assert replies[1] == STOCK[0]
-    assert replies[2] == "Electronics? No, I don't think so. Which branch are you at?"
+        server_replies=["Hello?", a, b, fresh])
+    assert replies == ["Hello?", a, fresh]
+    retry = events(received, "response.create")[3]["response"]["instructions"]
+    assert "IMPORTANT" in retry and "Do not begin with the words 'oh my goodness'" in retry
+
+
+def test_a_leading_greeting_is_stripped_from_mid_call_replies_but_not_from_fixed_lines():
+    """Calls kept producing 'Oh, hello there. ...' / 'Oh, hello. ...' mid-call despite the prompt asking her not to."""
+    clean = HiggsTextAgent._clean
+    assert clean("Oh, hello there. You mentioned the number on the back.", False) == "You mentioned the number on the back."
+    assert clean("Hello? Who is this, dear?", False) == "Who is this, dear?"
+    assert clean("Oh, hello. Biscuit says hi, dear.", False) == "Biscuit says hi, dear."
+    assert clean("Hello there, dear, I can't hear you well.", False) == "Hello there, dear, I can't hear you well."
+    assert clean("Hello?", True) == "Hello?"                         # the opening greeting itself is a fixed line
+
+
+def test_a_bare_mid_call_greeting_counts_as_a_repeat():
+    agent = HiggsTextAgent(Persona(), "k")
+    assert agent._is_repeat("Oh, hello there.") and agent._is_repeat("Hello.")
+    assert not agent._is_repeat("Oh, hello there.", check_opening=False)
+
+
+def test_a_greeting_reply_reaches_the_caller_without_the_greeting():
+    _, replies = converse([(Mode.GREET, None, ""), (Mode.SCREEN, "I'm Sam from Scotiabank.", "g")],
+                          server_replies=["Hello?", "Oh, hello there. Which branch are you calling from, Sam?"])
+    assert replies == ["Hello?", "Which branch are you calling from, Sam?"]
+
+
+def test_the_callers_earlier_turns_are_recapped_on_every_reply_even_if_the_server_forgets():
+    """Real call: she asked for a callback number three times, then greeted the caller as if the call had just begun."""
+    received, _ = converse([(Mode.GREET, None, ""), (Mode.SCREEN, "I'm Sam from Scotiabank.", "g1"),
+                            (Mode.SCREEN, "We declined a purchase this morning.", "g2"),
+                            (Mode.SCREEN, "Please call the number on your card.", "g3")])
     creates = events(received, "response.create")
-    retry = creates[3]["response"]["instructions"]
-    assert "IMPORTANT" in retry and "Do not begin with the words 'oh hello there'" in retry
+    assert "Earlier in this call" not in creates[1]["response"]["instructions"]       # nothing earlier on turn 1
+    last = creates[3]["response"]["instructions"]
+    assert '"I\'m Sam from Scotiabank." | "We declined a purchase this morning."' in last
+    assert 'The caller just said: "Please call the number on your card."' in last
+    assert "do not act as if the call is just starting" in last
+
+
+def test_the_fallback_after_repeated_repeats_never_re_asks_who_is_calling():
+    """Real call: 'Sorry, dear, who is this?' (a scripted line) came out after the caller had introduced himself."""
+    same = "Could you please hold on while I find a pen?"
+    _, replies = converse([(Mode.GREET, None, ""), (Mode.SCREEN, "a", "g"), (Mode.SCREEN, "b", "g")],
+                          server_replies=["Hello?", same, same])
+    assert replies[2] in NEUTRAL_FALLBACKS and "who is this" not in replies[2].lower()
 
 
 def test_the_callers_words_are_quoted_in_the_per_reply_instructions():
