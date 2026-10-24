@@ -10,6 +10,7 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
 from hangon.media import HiggsScreen, MediaBridge, OutboundAudio
+from hangon.models import Mode
 
 
 class ToneTrack(MediaStreamTrack):
@@ -233,4 +234,55 @@ def test_higgs_speech_start_clears_playback_and_notifies_browser():
             finally:
                 await screen.close()
                 output.stop()
+    asyncio.run(scenario())
+
+
+def test_higgs_waits_for_interrupted_response_to_finish_before_replying():
+    async def scenario():
+        received = []
+        reply_requested = asyncio.Event()
+
+        async def provider(ws):
+            async for raw in ws:
+                event = json.loads(raw)
+                received.append(event)
+                if event["type"] == "session.update":
+                    await ws.send(json.dumps({"type": "session.created"}))
+                    await ws.send(json.dumps({"type": "session.updated"}))
+                elif event["type"] == "response.create" and len(
+                    [item for item in received if item["type"] == "response.create"]
+                ) == 1:
+                    await ws.send(json.dumps({"type": "response.created", "response": {"id": "greeting"}}))
+                    await ws.send(json.dumps({"type": "input_audio_buffer.speech_started"}))
+                    await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed",
+                                              "item_id": "caller-1", "transcript": "Hello"}))
+                    await asyncio.sleep(0.05)
+                    assert len([item for item in received if item["type"] == "response.create"]) == 1
+                    await ws.send(json.dumps({"type": "response.done"}))
+                elif event["type"] == "response.create":
+                    reply_requested.set()
+
+        async def on_turn(_):
+            await screen.speak(Mode.SCREEN)
+            assert screen.pending_mode is Mode.SCREEN
+
+        async def noop(_):
+            pass
+
+        async with serve(provider, "127.0.0.1", 0) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+            async def opener(target, **kwargs):
+                return await connect(target)
+
+            output = OutboundAudio()
+            screen = HiggsScreen(on_turn, noop, noop, "test-key", url, output, opener)
+            try:
+                await screen.start()
+                await asyncio.wait_for(reply_requested.wait(), 2)
+                assert len([item for item in received if item["type"] == "response.create"]) == 2
+            finally:
+                await screen.close()
+                output.stop()
+
     asyncio.run(scenario())

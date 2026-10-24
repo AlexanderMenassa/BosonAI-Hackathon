@@ -94,6 +94,7 @@ class HiggsScreen:
         self.paused = False
         self.responding = False
         self.awaiting_response = False
+        self.pending_mode: Mode | None = None
         self.item: str | None = None
         self.generation = 0
         self.suppress_output = False
@@ -120,7 +121,7 @@ class HiggsScreen:
         await self.ws.send(json.dumps(config))
         while True:
             event = json.loads(await asyncio.wait_for(self.ws.recv(), 15))
-            if event.get("type") in ("session.created", "session.updated"):
+            if event.get("type") == "session.updated":
                 break
             if event.get("type") == "error":
                 raise RuntimeError("Higgs rejected audio session configuration")
@@ -131,6 +132,9 @@ class HiggsScreen:
 
     async def speak(self, mode: Mode) -> None:
         if self.active and not self.paused and self.ws:
+            if self.responding:
+                self.pending_mode = mode
+                return
             self.responding = True
             self.awaiting_response = True
             await self.ws.send(json.dumps({"type": "response.create", "response": {
@@ -190,6 +194,9 @@ class HiggsScreen:
                         await self.on_caption(line)
                 elif kind == "response.done":
                     self.responding = False
+                    if self.pending_mode is not None:
+                        mode, self.pending_mode = self.pending_mode, None
+                        await self.speak(mode)
                 elif kind in ("error", "session.idle_timeout", "session.max_duration_reached"):
                     raise RuntimeError("Higgs audio session ended")
         except asyncio.CancelledError:

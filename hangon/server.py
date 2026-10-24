@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import ssl
 import tempfile
@@ -28,12 +29,17 @@ from .models import ConnectionState as State, FailureReason, Mode
 from .store import Store
 
 WEB = Path(__file__).resolve().parent.parent / "web"
-PROFILES = {
-    "trusted": "+14165550001",
-    "blocked": "+14165550002",
-    "both": "+14165550003",
-    "unknown": "+14165550004",
-}
+
+def demo_number(raw: object) -> str:
+    """Canonical North American test number; no telephone-network call is made."""
+    if not isinstance(raw, str) or not re.fullmatch(r"[+()0-9 .-]{10,32}", raw):
+        raise GatewayError("enter a valid test phone number")
+    digits = re.sub(r"[^0-9]", "", raw)
+    if len(digits) == 10:
+        digits = "1" + digits
+    if len(digits) != 11 or not digits.startswith("1"):
+        raise GatewayError("enter a 10-digit North American test number")
+    return "+" + digits
 
 
 def ice_configuration() -> list[dict]:
@@ -97,6 +103,7 @@ class Room:
                  connect_timeout: float = 30.0, live_media: bool = False,
                  boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None):
         self.code = code
+        self.store = store
         self.lock = asyncio.Lock()
         self.caller: Participant | None = None
         self.receiver: Participant | None = None
@@ -138,6 +145,7 @@ class Room:
             "receiver_ready": bool(self.receiver and self.receiver.socket and self.receiver.ready),
             "receiver_busy": g.state in (State.RINGING, State.CONNECTING, State.CONNECTED),
             "call_id": g.incoming.call_id if g.incoming else None,
+            "caller_number": g.incoming.number if g.incoming else None,
             "route": g.route.value if g.route else None,
             "state": g.state.value, "revision": g.revision,
             "summary": g.session.caller_summary if g.session else "",
@@ -151,6 +159,8 @@ class Room:
             "synthetic_mode": self.media is None,
             "ice_servers": self.media_ice_servers if hasattr(self, "media_ice_servers") else [],
             "relay_only": os.environ.get("HANGON_RELAY_ONLY") == "1",
+            "trusted_numbers": self.store.trusted_list() if role == "receiver" else [],
+            "blocked_numbers": self.store.blocklist() if role == "receiver" else [],
         }
 
     async def _on_turn(self, line: str) -> None:
@@ -218,14 +228,29 @@ class Room:
                 participant.ready = bool(data.get("ready"))
                 if not participant.ready and g.state is State.RINGING:
                     g.fail(g.incoming.call_id, FailureReason.RECEIVER_UNAVAILABLE)
+            elif kind in ("list.add", "list.remove") and participant.role == "receiver":
+                number = demo_number(data.get("number"))
+                list_name = data.get("list")
+                if list_name not in ("trusted", "blocked"):
+                    raise GatewayError("choose the trust or block list")
+                if kind == "list.add":
+                    label = data.get("label", "")
+                    if not isinstance(label, str) or len(label.strip()) > 40:
+                        raise GatewayError("contact name must be at most 40 characters")
+                    if list_name == "trusted":
+                        self.store.add_trusted(number, label.strip())
+                    else:
+                        self.store.block(number, label.strip())
+                elif list_name == "trusted":
+                    self.store.remove_trusted(number)
+                else:
+                    self.store.unblock(number)
             elif kind == "call.start" and participant.role == "caller":
-                profile = data.get("profile")
-                if profile not in PROFILES:
-                    raise GatewayError("unknown synthetic profile")
+                number = demo_number(data.get("number"))
                 request_id = data.get("request_id")
                 if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
                     raise GatewayError("invalid request_id")
-                g.arrive(request_id, PROFILES[profile])
+                g.arrive(request_id, number)
                 self.assistant_caption = ""
                 if self.media and g.state is not State.ENDED:
                     self.media_started = time.monotonic()
@@ -406,7 +431,8 @@ async def static_page(connection: ServerConnection, request):
             return connection.respond(403, "Origin not allowed")
         return None
     files = {"/": ("index.html", "text/html; charset=utf-8"),
-             "/call.js": ("call.js", "text/javascript; charset=utf-8")}
+             "/call.js": ("call.js", "text/javascript; charset=utf-8"),
+             "/style.css": ("style.css", "text/css; charset=utf-8")}
     item = files.get(request.path)
     if not item:
         return connection.respond(404, "Not found")
@@ -421,10 +447,6 @@ async def run(host: str, port: int, db_path: str, ring_timeout: float = 30.0,
               connect_timeout: float = 30.0, cert: str | None = None,
               key_file: str | None = None) -> None:
     store = Store(db_path)
-    store.add_trusted(PROFILES["trusted"], "Synthetic trusted")
-    store.add_trusted(PROFILES["both"], "Synthetic both-listed")
-    store.block(PROFILES["blocked"], "Synthetic blocked")
-    store.block(PROFILES["both"], "Synthetic both-listed")
     settings = Settings.from_env()
     ice_servers = ice_configuration()
     hub = Hub(store, ring_timeout, connect_timeout, True,

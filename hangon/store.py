@@ -87,6 +87,15 @@ class Store:
                 (normalize_number(number), label),
             )
 
+    def remove_trusted(self, number: str) -> bool:
+        with closing(self._conn()) as c, c:
+            cur = c.execute("DELETE FROM trusted WHERE number=?", (normalize_number(number),))
+        return cur.rowcount > 0
+
+    def trusted_list(self) -> list[dict]:
+        with closing(self._conn()) as c:
+            return [dict(row) for row in c.execute("SELECT number, label FROM trusted ORDER BY label, number")]
+
 
     # --- call log --------------------------------------------------------
     def begin_call(self, public_call_id: str, request_id: str, number: str, started_at: float) -> int:

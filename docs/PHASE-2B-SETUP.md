@@ -54,11 +54,11 @@ The example host and placeholder must be replaced. A fixed TURN username/passwor
 
 ## 4. Run the two-device check
 
-1. On the caller device, open the shared URL, choose Caller, and create a room. Give the displayed room code to the receiver. The displayed caller identities are synthetic test profiles.
-2. On the second device, open the same URL, choose Receiver, join the room, and click **Ready**. Allow microphone access when prompted.
-3. Use headphones on both devices. On the caller, select **Unknown** and click **Call**. Allow microphone access. Speak; confirm Higgs audio plays and the caller's finalized speech appears.
+1. On the caller device, open the shared URL and create a room. Give the displayed room code to the receiver.
+2. On the second device, open the same URL, join as Receiver, and click **Ready for calls**. Allow microphone access when prompted. The receiver can open **Call lists** to add or remove test numbers.
+3. Use headphones on both devices. On the caller, enter an unlisted test number such as `(416) 555-0104` and click **Call**. Allow microphone access. Speak; confirm Higgs audio plays and the caller's finalized speech appears.
 4. When screening approves the call, confirm the receiver rings. Click **Accept**. Both people should hear each other, and Higgs should no longer be audible.
-5. Repeat with **Trusted** to check the direct route without Higgs. Test **End** from each device in separate calls, plus one spoken interruption while Higgs is talking.
+5. Add a different test number to the receiver's trust list and call from that number to check the direct route without Higgs. Add it to the block list too and confirm blocking takes priority on the next call. Test **End** from each device in separate calls, plus one spoken interruption while Higgs is talking.
 6. Record the devices/browsers, network, whether TURN relay was used, and each observed result. Do not label offline or fake-server checks as live success.
 
 If the page opens but microphone access fails, confirm the exact HTTPS URL and browser permission. If the page works but audio does not connect, inspect the on-screen connection status and TURN reachability first.

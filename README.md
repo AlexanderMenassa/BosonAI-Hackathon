@@ -10,13 +10,13 @@ The **protected person** is the user whose calls are screened. A **guardian** is
 
 Every incoming call reaches a **call gateway** before the receiver or Higgs. This intermediate layer applies routing rules: pass a trusted caller to the receiver, reject a blocked caller, or connect an unknown caller to Higgs Realtime for screening.
 
-The demo runs between **your browser on your device (caller)** and **your teammate's browser on their device (receiver)**. Both join the same private demo room on a shared application URL. You select a test caller profile and click Call. Your teammate's browser rings only for trusted or screening-approved calls; they click Accept to begin a real two-way audio conversation. A dashboard displays screening transcripts, assessments, evidence, and the actual connection state.
+The demo runs between **your browser on your device (caller)** and **your teammate's browser on their device (receiver)**. Both join the same private demo room on a shared application URL. The caller enters a simulated phone number and taps Call. The receiver can add or remove numbers in the trust and block lists. The gateway routes each new call from those lists: blocked numbers are rejected, trusted numbers ring directly, and unlisted numbers go to screening. The receiver taps Accept to begin a real two-way browser audio conversation. The phone-style page shows call state, while expandable panels hold room setup, lists, and details.
 
 For the hackathon:
 
 - Use Higgs Realtime for live conversation and a separate language-model call for classification.
 - Use WebRTC audio connections from both browsers to a backend media bridge. The gateway switches the caller between Higgs screening and the receiver. Use WebSocket messages for browser call controls and a separate WebSocket connection from the backend to Boson.
-- Represent phone numbers, trusted contacts, and blocked callers with test profiles.
+- Represent phone numbers with caller-entered test identities and editable receiver trust and block lists.
 - Implement real browser ringing, Accept/Decline controls, and two-way audio handoff. Only phone numbers, the telephone network, and SMS/guardian notifications are simulated.
 - Keep real phone calls, carrier blocking, and actual SMS delivery outside the minimum demo.
 
@@ -30,7 +30,7 @@ Boson's [official Toronto 2026 announcement](https://www.boson.ai/blog/mscac-hig
 
 | Area | Present in the repository | Remaining for the target demo |
 | --- | --- | --- |
-| Call gateway | `CallSession.open()` checks blocked/trusted profiles in the simulator | Incoming-call adapter, explicit pass/reject/screen decision, connection lifecycle |
+| Call gateway | Browser number lookup routes through the gateway; terminal simulator also checks lists | Phone-provider adapter and live acceptance checks |
 | Call flow | Python decision engine and terminal simulator | Two-device room pairing, receiver presence, ringing/accept/decline, real audio handoff |
 | Classification | Keyword baseline and Ollama adapter | Live-model evaluation, quote-backed assessments, stale-result protection |
 | Conversation | Scripted responses and Higgs Realtime text adapter | Live audio, transcription, playback, interruptions |
@@ -47,7 +47,7 @@ Boson's [official Toronto 2026 announcement](https://www.boson.ai/blog/mscac-hig
 flowchart TD
     Caller[Your browser: caller] <-->|Call controls| Gateway[Backend call gateway]
     Receiver[Teammate browser: receiver] <-->|Ring / accept / decline / end| Gateway
-    Gateway <-->|Profile lookup| Store[Trusted contacts and blocklist]
+    Gateway <-->|Number lookup| Store[Trusted contacts and blocklist]
     Gateway -->|Reject blocked call| End[End without ringing]
     Caller <-->|WebRTC audio| Bridge[Backend media bridge]
     Receiver <-->|WebRTC audio only after accepted handoff| Bridge
@@ -67,11 +67,11 @@ The gateway receives the call **before the receiver rings**. It is a backend com
 
 | Initial decision | Condition, in priority order | Connection action |
 | --- | --- | --- |
-| `REJECT` | Blocklisted test profile, even if also trusted | End without opening a Higgs session or ringing the receiver |
-| `PASS` | Trusted test profile and not blocked | Ring the receiver; connect audio only after Accept; no Higgs session |
+| `REJECT` | Test number on the block list, even if also trusted | End without opening a Higgs session or ringing the receiver |
+| `PASS` | Test number on the trust list and not blocked | Ring the receiver; connect audio only after Accept; no Higgs session |
 | `SCREEN` | All other callers | Keep the receiver disconnected and open a Higgs screening session |
 
-Before conversation begins, the gateway can only apply known-profile rules; it cannot infer an unknown caller's intent. During screening, Higgs conducts the conversation and the separate classifier assesses it. The gateway then applies backend policy to continue screening, approve a handoff, or end with a message/report. High-stakes and uncertain calls must not automatically pass.
+Before conversation begins, the gateway can only apply known-number rules; it cannot infer an unlisted caller's intent. During screening, Higgs conducts the conversation and the separate classifier assesses it. The gateway then applies backend policy to continue screening, approve a handoff, or end with a message/report. High-stakes and uncertain calls must not automatically pass.
 
 Track one call ID from arrival to completion. Handle duplicate arrival/handoff events once, cancel pending screening on hang-up, and stop Higgs audio before connecting the receiver. If screening is unavailable, show a failed-screening/message outcome rather than silently passing the caller. If the receiver is offline, busy, declines, or does not answer within a configurable ringing timeout, offer the caller a message-taking path and record the actual outcome. Never show connected until the receiver has accepted and the audio bridge is ready.
 
@@ -87,7 +87,7 @@ Reuse the Python core. A small FastAPI server, a WebRTC bridge such as aiortc or
 | `hangon/engine.py`, `hangon/rules.py` | Central routing and ending rules |
 | `hangon/classifier.py`, `hangon/models.py` | Validated assessments and evidence |
 | `hangon/agent.py`, `hangon/persona.py` | Higgs session adapter and persona prompts |
-| `hangon/store.py` | Test profiles, reports, and blocklist persistence |
+| `hangon/store.py` | Trust and block lists, reports, and call persistence |
 | `hangon/reports.py`, `hangon/notify.py` | Final summaries and simulated notifications |
 | `hangon/sim.py`, `scenarios/`, `tests/` | Offline regression checks and demo fallback |
 
@@ -95,7 +95,7 @@ Reuse the Python core. A small FastAPI server, a WebRTC bridge such as aiortc or
 
 - Provide caller and receiver views under one shared HTTPS application URL, backed by the same running server. Use an invite code with separate server-bound caller/receiver sessions; authorize control events against the assigned role and call ID.
 - The receiver joins first and clicks Ready to enable audio. The caller grants microphone access when starting a call, including trusted bypass calls. Show microphone-denied and playback errors with a retry action.
-- Support one active call per demo room. Keep test profile selection separate from room identity; choosing a profile must not let the caller impersonate the receiver or change routing rules.
+- Support one active call per demo room. Keep the caller's test number separate from room identity; choosing a number must not let the caller impersonate the receiver or edit lists.
 - Use HTTPS/WSS for the shared deployment. Browser microphone capture requires a secure context; a plain HTTP LAN address is not an adequate two-device setup. See [browser microphone requirements](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).
 - Configure and test WebRTC connectivity on both actual devices. Include a TURN relay, which forwards media when network restrictions prevent a direct connection to the bridge; see [WebRTC's TURN guide](https://webrtc.org/getting-started/turn-server). An HTTPS tunnel for the web page alone does not establish the media route.
 - Rehearse on the intended venue network and, if feasible, with one device on a hotspot. Use headphones on both devices. Keep server secrets out of browser responses.
@@ -105,8 +105,8 @@ Reuse the Python core. A small FastAPI server, a WebRTC bridge such as aiortc or
 ### Intercept, then answer
 
 1. Receive the incoming call at the gateway and assign a call ID; do not ring the receiver yet.
-2. Reject a blocked test profile before starting a model session.
-3. Ring the teammate's browser for a trusted profile; wait for Accept before connecting their audio.
+2. Reject a blocked test number before starting a model session.
+3. Ring the teammate's browser for a trusted test number; wait for Accept before connecting their audio.
 4. Connect all other callers to Higgs for screening, beginning with: “Hello, this is [persona]'s assistant. Calls may be transcribed. Who's calling?”
 
 ### Screen and route
@@ -200,7 +200,7 @@ Run the local control demo with the project environment:
 .venv/bin/python -m hangon.server --port 8765
 ```
 
-Open `http://127.0.0.1:8765/` in two browser sessions. Create a room as caller, join its invite code as receiver, then click Ready. The caller can select synthetic trusted, blocked, both-listed, or unknown profiles. For an unknown caller, submit `Hi, this is Riverside Pharmacy calling.` followed by `Margaret's prescription is ready for pickup.` to exercise offline engine approval. The receiver can Accept or Decline; Accept stays at `connecting` because no media bridge is installed, then offers a message after the connection timeout. The default database is temporary and removed when the server stops. This localhost HTTP page is for control checks only; microphone capture and two-device network setup require Phase 2B's HTTPS/WSS and media work.
+The current browser UI uses caller-entered test numbers and receiver-managed lists; use the Phase 2B instructions below for live audio. The Phase 2A localhost exercise used control-only transports and did not prove browser microphone or human audio.
 
 ### Phase 2B — Integrate two-device audio and Higgs handoff (3–4 hours; critical path)
 
@@ -214,7 +214,7 @@ Run from the project environment after supplying `BOSON_API_KEY` in the ignored 
 .venv/bin/python -m hangon.server --host 0.0.0.0 --port 8765 --cert /path/to/fullchain.pem --key-file /path/to/privkey.pem
 ```
 
-Set `HANGON_STUN_URL` if needed. For relay access, set `HANGON_TURN_URL` and `HANGON_TURN_SECRET` for a TURN server configured with the same REST shared secret; the backend generates hour-limited credentials. These values and the Boson key stay server-side. Set `HANGON_RELAY_ONLY=1` for a relay-only acceptance run. See `.env.example` for names. An HTTPS page alone does not establish WebRTC connectivity. Open the same `https://<hostname>:8765/` URL on both devices, create and join a room, click Ready on the receiver, then Call on the caller. Use headphones. The browser asks for microphone permission when Ready or Call is clicked. The synthetic caller profile changes routing; it does not authorize receiver controls.
+Set `HANGON_STUN_URL` if needed. For relay access, set `HANGON_TURN_URL` and `HANGON_TURN_SECRET` for a TURN server configured with the same REST shared secret; the backend generates hour-limited credentials. These values and the Boson key stay server-side. Set `HANGON_RELAY_ONLY=1` for a relay-only acceptance run. See `.env.example` for names. An HTTPS page alone does not establish WebRTC connectivity. Open the same `https://<hostname>:8765/` URL on both devices, create and join a room, click Ready on the receiver, then Call on the caller. Use headphones. The browser asks for microphone permission when Ready or Call is clicked. The caller's test number selects routing from the receiver's lists; it does not authorize receiver controls.
 
 For the explicit acceptance run, record the browser and device on each side, network and TURN route, whether Higgs spoke and transcribed the caller, whether an approved call rang and carried two-way human audio, interruption behavior, and whether End from each side released both microphones. Keep the offline `python scripts/verify.py` result separate from this live record.
 
@@ -272,9 +272,9 @@ These checks validate our new routing and integration code. They do not reopen b
 | Tax-agency impersonation demanding gift cards | Scam, bounded stalling, quoted evidence, final blocklisting |
 | Bank claim that otherwise sounds legitimate | High-stakes hold; no automatic transfer |
 | Vague caller remains unclear | Message taken at cap; no block |
-| Trusted / blocked test profile | Trusted rings receiver and connects on Accept; blocked never rings; zero Higgs sessions for both |
-| Profile is both trusted and blocked | Reject wins; receiver never rings |
-| Unknown profile | Gateway opens screening; receiver remains disconnected |
+| Number on trust / block list | Trusted rings receiver and connects on Accept; blocked never rings; zero Higgs sessions for both |
+| Number is both trusted and blocked | Reject wins; receiver never rings |
+| Unlisted number | Gateway opens screening; receiver remains disconnected |
 | Duplicate arrival or handoff event | No duplicate Higgs session or receiver connection |
 | Screening service unavailable | Message/failure outcome; no automatic pass |
 | Receiver offline, busy, declines, or does not answer | Message-taking path; reason recorded, no false connected state |
