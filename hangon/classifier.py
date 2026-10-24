@@ -136,7 +136,7 @@ _SOFT_CUES = {
                r"today only|end of (?:the )?day|\burgent(?:ly)?\b",
     "impersonates_authority": r"canada revenue|revenue agency|\bc\.?\s?r\.?\s?a\b|\br\s?c\s?a\b|\bpolice\b|\brcmp\b|"
                               r"fraud (?:prevention|department|team)|\bservice canada\b",
-    "relative_in_distress": r"\bgrand(?:ma|pa|mother|father|son|daughter)\b|your (?:nephew|niece)|\bit'?s me\b",
+    "relative_in_distress": r"\bgrand(?:ma|pa|mother|father|son|daughter|brother|sister)\b|your (?:nephew|niece)|\bit'?s me.{0,20}(?:emergency|trouble|help|accident|money|jail)\b",
     "unexpected_money": r"\brefund\b|overpayment|\bprize\b|lottery|back taxes|\bowe[sd]?\b|"
                         r"missed (?:a |the |your )?payment|payment deadline",
 }

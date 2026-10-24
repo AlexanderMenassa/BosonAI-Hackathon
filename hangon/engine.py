@@ -19,7 +19,7 @@ import time
 from dataclasses import replace
 from typing import Callable
 
-from .classifier import SCORE_NOTHING_YET, SCORE_ORDINARY, Classifier
+from .classifier import SCORE_NOTHING_YET, SCORE_ORDINARY, Classifier, _HARD_CUES
 from .config import Settings
 from .models import Action, ClassifierResult, Decision, Evidence, Label, Mode, Outcome, Route
 from .rules import looks_like_injection, mentions_high_stakes
@@ -101,29 +101,26 @@ class CallSession:
         self.transcript.append(("agent", text))
 
     def _apply_benign_decay(self, r: ClassifierResult) -> ClassifierResult:
-        """Lower the score while a call stays clean, so an ordinary caller can reach LEGIT without a stated purpose.
-
-        A turn is clean when the judge saw no behaviour at all, the call has never been high-stakes, and nobody
-        has tried to steer the screening. Each clean turn lowers the score a step; after `benign_turns` of them
-        it reaches LEGIT. Done here, in code, so the agent has no say in it.
-
-        Only an LLM judge's "clean" counts. The regex heuristic cannot tell a friendly caller from one who dodges
-        every question, so its turns neither advance nor reset the streak.
-        """
+        """Lower the score while a call stays clean or lacks hard scam indicators."""
         n = self.cfg.benign_turns
         if r.source.startswith("heuristic"):
             return r
-        clean = (r.label is Label.UNSURE and r.scam_score <= SCORE_NOTHING_YET and not r.high_stakes
-                 and not self.high_stakes and not self.injection_attempt)
+
+        # Allow decay if there are NO hard behaviours, no high-stakes, and no injection attempt.
+        # This way, soft tags like a relative introduction can fade if the conversation stays ordinary.
+        has_hard = any(t in _HARD_CUES for t, _ in getattr(r, "behaviours", []))
+        clean = (not has_hard and not r.high_stakes and not self.high_stakes and not self.injection_attempt)
+
         self._clean_turns = self._clean_turns + 1 if clean else 0
         if n <= 0 or not clean:
             return r
         if self._clean_turns >= n:
             return replace(r, label=Label.LEGIT, scam_score=SCORE_ORDINARY,
-                           reason=f"no scam behaviour in {self._clean_turns} turns of ordinary conversation")
-        step = (SCORE_NOTHING_YET - SCORE_ORDINARY) / n
-        return replace(r, scam_score=round(r.scam_score - step * self._clean_turns, 2),
-                       reason=f"no scam behaviour so far ({self._clean_turns}/{n} clean turns)")
+                           reason=f"no scam behaviour in {self._clean_turns} turns of normal conversation")
+
+        step = (r.scam_score - SCORE_ORDINARY) / max(1, (n - self._clean_turns + 1))
+        return replace(r, scam_score=round(max(SCORE_ORDINARY, r.scam_score - step), 2),
+                       reason=f"no scam behaviour so far ({self._clean_turns}/{n} normal turns)")
 
     def on_caller_turn(self, text: str) -> Decision:
         if self.ended:

@@ -120,39 +120,53 @@ def pick_topic(mode: Mode, known: dict[str, str], asked: set[str]) -> str | None
 
 
 def turn_guidance(mode: Mode, known: dict[str, str], asked: set[str] | None = None) -> str:
-    """A short directive for this one turn: what is already known, what is not, and how to sound.
-
-    `asked` is the set of topics already asked about this call. When given, each topic is asked at most once (even
-    if the caller dodged it) and the chosen topic is ADDED to the set. When None, the model picks (old behaviour)."""
+    """A short directive for this one turn: what is already known, what is not, and how to sound."""
     if mode not in (Mode.SCREEN, Mode.STALL):
         return ""
+
     parts: list[str] = []
     told = "; ".join(f"{_TOLD[k]}: {v}" for k, v in known.items())
     if told:
         parts.append(f"What the caller has already told you: {told}. Never ask for any of this again.")
+
+    # Check if we already know a name or if it's a personal/familiar call
+    has_name = bool(known.get("name"))
+
     if asked is None:
         wanted = _SCREENING_FACTS if mode is Mode.SCREEN else tuple(_ASK_FOR)
         unknown = [_ASK_FOR[k] for k in wanted if k not in known]
         if unknown:
             parts.append("Still unknown: " + "; ".join(unknown) + ". Ask about ONE of these, whichever fits most "
-                         "naturally after what they just said.")
+                                                                  "naturally after what they just said.")
         else:
             parts.append(_REQUEST_ITSELF.format(lead="You already know the basics, so ask"))
     else:
+        # If we have a name, filter out corporate-specific prompts like 'organization' or 'callback number'
+        active_screening_facts = list(_SCREENING_FACTS)
+        if has_name:
+            # For known names/relatives, skip asking for organization or callback numbers
+            active_screening_facts = [f for f in active_screening_facts if f not in ("organization", "number")]
+
+        topic = next((k for k in active_screening_facts if k not in known and k not in asked), None)
         already = [_ASK_FOR[k] for k in _ASK_FOR if k in asked]
-        topic = pick_topic(mode, known, asked)
+
         if already:
             parts.append("You have already asked about: " + "; ".join(already) + ". Never ask about any of that "
-                         "again, even if they dodged the question or refused.")
+                                                                                 "again, even if they dodged the question or refused.")
         if topic:
             asked.add(topic)
             parts.append(f"This turn, ask about this and nothing else: {_ASK_FOR[topic]}.")
         else:
-            parts.append(_REQUEST_ITSELF.format(lead="You have asked everything you needed about who they are, so ask"))
+            parts.append(_REQUEST_ITSELF.format(lead="You have asked everything you needed, so ask"))
+
+    if has_name:
+        parts.append(
+            "The caller has given a name. Keep the tone warm, familiar, and conversational—do not treat them like an official representative or interrogate them for a callback number.")
+
     parts.append("Sound like yourself, a warm older person: first react in a few words to something specific they "
                  "just said (a detail from THEIR words, never a greeting), then ask your one question. Never start "
-                 "with 'I understand' or 'I see', and vary how you begin.")
-    # Deliberately NOT quoting the agent's previous line: quoting it seemed to prime the model to copy it.
+                 "dengan 'I understand' or 'I see', and vary how you begin.")
+
     parts.append("You are mid-conversation: do not greet or introduce yourself again, so never say 'hello', "
                  "'hello there' or 'oh, hello' now, and do not repeat or rephrase anything you have already said.")
     return " ".join(parts)
