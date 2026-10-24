@@ -71,10 +71,11 @@ def make_server(received, caller_lines, barge_in_at=None):
                 await ws.send(json.dumps({"type": "response.output_audio_transcript.done", "transcript": line}))
                 await ws.send(json.dumps({"type": "response.done", "response": {"status": "completed"}}))
                 if lines:
-                    await ws.send(json.dumps({"type": "input_audio_buffer.speech_started", "item_id": f"u{n}"}))
-                    await ws.send(json.dumps({"type": "input_audio_buffer.speech_stopped", "item_id": f"u{n}"}))
-                    await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed",
-                                              "item_id": f"u{n}", "transcript": lines.pop(0)}))
+                    nxt = lines.pop(0)
+                    for i, said in enumerate(nxt if isinstance(nxt, list) else [nxt]):
+                        await ws.send(json.dumps({"type": "input_audio_buffer.speech_stopped", "item_id": f"u{n}{i}"}))
+                        await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed",
+                                                  "item_id": f"u{n}{i}", "transcript": said}))
     return handler
 
 
@@ -188,3 +189,27 @@ def test_mic_audio_is_streamed_to_higgs(tmp_path):
     received = asyncio.run(go())
     appends = [e for e in received if e["type"] == "input_audio_buffer.append"]
     assert appends and base64.b64decode(appends[0]["audio"]) == b"\x00\x01" * 2400
+
+
+def test_session_uses_a_stricter_speech_detector(tmp_path):
+    _, _, received = run_voice(tmp_path, CRA, number="+16475550993")
+    td = received[0]["session"]["audio"]["input"]["turn_detection"]
+    assert td["threshold"] == 0.8 and td["silence_duration_ms"] == 600
+
+
+def test_one_word_noise_that_cut_margaret_off_is_ignored_and_she_carries_on(tmp_path):
+    audio = FakeAudio(playing=True)
+    call, session, received = run_voice(
+        tmp_path, ["This is the CRA, you owe back taxes and a warrant is out for your arrest.", "E."],
+        audio=audio, barge_in_at=2, hang_up_after=1.5, number="+16475550992")
+    creates = [e["response"]["instructions"] for e in received if e["type"] == "response.create"]
+    assert len(creates) == 3 and "cut off by a small noise" in creates[2]
+    assert [w for w, _ in session.transcript].count("caller") == 1     # the noise is not a turn
+
+
+def test_bits_said_back_to_back_are_merged_into_one_turn(tmp_path):
+    _, session, _ = run_voice(tmp_path, [["Hi, this is Riverside", "Pharmacy, the prescription is ready for pickup."]],
+                              hang_up_after=1.5, number="+16475550991")
+    callers = [t for w, t in session.transcript if w == "caller"]
+    assert callers == ["Hi, this is Riverside Pharmacy, the prescription is ready for pickup."]
+    assert session.outcome is Outcome.FORWARDED

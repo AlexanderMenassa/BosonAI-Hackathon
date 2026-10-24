@@ -57,6 +57,8 @@ class VoiceCall:
         self.pending_action: Action | None = None   # FORWARD / END waiting for the last line to finish playing
         self.assistant_item: str | None = None      # the reply currently being spoken (for truncation)
         self.responding = False
+        self.interrupted = False                    # Margaret was cut off by the caller (or a noise)
+        self.mode: Mode | None = None               # the mode of the reply most recently requested
         self.done = asyncio.Event()
         self.turns: asyncio.Queue[str] = asyncio.Queue()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -87,7 +89,9 @@ class VoiceCall:
                 "input": {
                     "format": {"type": "audio/pcm", "rate": RATE},
                     # Server detects end of turn, but does NOT reply on its own: the engine decides first.
-                    "turn_detection": {"type": "server_vad", "create_response": False, "interrupt_response": True},
+                    "turn_detection": {"type": "server_vad", "threshold": self.settings.vad_threshold,
+                                       "silence_duration_ms": 600, "prefix_padding_ms": 300,
+                                       "create_response": False, "interrupt_response": True},
                     "transcription": transcription,
                 },
                 "output": {"format": {"type": "audio/pcm", "rate": RATE}, "voice": self.voice},
@@ -97,7 +101,13 @@ class VoiceCall:
     async def speak(self, mode: Mode, guidance: str = "") -> None:
         instructions = build_instructions(self.persona, mode, guidance)
         self.dbg(f"mode={mode.value} instructions: {instructions}")
+        # One reply at a time: wait for the previous one to finish (or be cancelled by an interruption).
+        for _ in range(100):
+            if not self.responding:
+                break
+            await asyncio.sleep(0.1)
         self.responding = True
+        self.mode = mode
         await self.send({"type": "response.create", "response": {"instructions": instructions}})
 
     # ------------------------------------------------------------------ main flow
@@ -130,7 +140,7 @@ class VoiceCall:
                 t.cancel()
             self.audio.stop()
             try:
-                await self.ws.close()
+                await asyncio.wait_for(self.ws.close(), timeout=2)  # never hang on a slow close handshake
             except Exception:
                 pass
         if not self.session.ended:
@@ -213,6 +223,7 @@ class VoiceCall:
         if self.audio.is_playing() and self.assistant_item and not self.pending_action:
             played_ms = int(self.audio.played_samples() * 1000 / RATE)
             self.audio.clear()
+            self.interrupted = True
             self.log("  [caller interrupted]")
             await self.send({"type": "conversation.item.truncate", "item_id": self.assistant_item,
                              "content_index": 0, "audio_end_ms": played_ms})
@@ -221,8 +232,18 @@ class VoiceCall:
     async def _turn_worker(self) -> None:
         while not self.done.is_set():
             text = await self.turns.get()
+            while not self.turns.empty():          # caller said several bits in a row: one turn
+                text += " " + self.turns.get_nowait()
             if self.session.ended or self.pending_action:
                 continue
+            if len(text.split()) < self.settings.min_turn_words:
+                self.log(f"  [ignored fragment: {text!r}]")
+                if self.interrupted and self.mode in (Mode.SCREEN, Mode.STALL):
+                    self.interrupted = False
+                    await self.speak(self.mode, "You were cut off by a small noise. Carry on naturally from where "
+                                                "you were, without repeating yourself or greeting them again.")
+                continue
+            self.interrupted = False
             self.log(f"caller> {text}")
             t0 = time.monotonic()
             d = await asyncio.to_thread(self.session.on_caller_turn, text)

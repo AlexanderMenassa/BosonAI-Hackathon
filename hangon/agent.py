@@ -29,7 +29,7 @@ import re
 from typing import Protocol
 
 from .models import Mode, Persona
-from .persona import base_prompt, build_instructions, greeting
+from .persona import base_prompt, build_instructions, exact_line, greeting
 
 STEERING = ("response", "session")
 REPEAT_SIMILARITY = 0.8   # replies at least this similar to an earlier line count as repeats
@@ -77,12 +77,8 @@ class ScriptedAgent:
             return next(self._screen)
         if mode is Mode.STALL:
             return next(self._stall)
-        if mode is Mode.HANDOFF:
-            return "Oh, one moment, I'll put you through."
-        if mode is Mode.HOLD:
-            return f"{n} can't come to the phone right now, but I'll tell them you called. They'll ring you back on your official number."
-        if mode is Mode.TAKE_MESSAGE:
-            return f"I'm sorry, I couldn't quite catch what this is about. I'll pass a message to {n}. Goodbye."
+        if mode in (Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE):
+            return exact_line(self.p, mode)
         if mode is Mode.GOODBYE:
             return "Oh, there's someone at the door, dear. I must go. Goodbye now!"
         raise ValueError(mode)

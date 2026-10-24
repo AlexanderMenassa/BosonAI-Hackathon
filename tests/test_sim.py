@@ -32,7 +32,7 @@ def test_scam_call_blocks_notifies_both_people_and_writes_the_evidence_card(tmp_
     assert s.outcome is Outcome.SCAM_ENDED and store.is_blocked(s.number)
     recipients = [to for to, _, _ in cap.sent]
     assert recipients.count("+1PROTECTED") == 2 and recipients.count("+1GUARDIAN") == 1
-    card = open(cap.sent[1][2]).read()
+    card = open(cap.sent[1][2], encoding="utf-8").read()
     assert "Canada Revenue Agency" in card and "gift card" in card and "647-555-0199" in card and "TRANSCRIPT" in card
 
 

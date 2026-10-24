@@ -45,6 +45,11 @@ class Settings:
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
     higgs_steering: str = "response"  # response | session  (run `python -m hangon.probe`)
 
+    # Voice: how sure Higgs's speech detector must be (0..1; server default 0.55) and the shortest caller
+    # utterance (in words) that counts as a turn. Stops coughs and "mm-hm" from interrupting Margaret.
+    vad_threshold: float = 0.8
+    min_turn_words: int = 2
+
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
@@ -66,4 +71,6 @@ class Settings:
             boson_api_key=e.get("BOSON_API_KEY", ""),
             boson_url=e.get("BOSON_REALTIME_URL", "wss://api.boson.ai/v1/realtime?model=higgs-realtime"),
             higgs_steering=e.get("HIGGS_STEERING", "response"),
+            vad_threshold=float(e.get("HANGON_VAD_THRESHOLD", 0.8)),
+            min_turn_words=int(e.get("HANGON_MIN_TURN_WORDS", 2)),
         )

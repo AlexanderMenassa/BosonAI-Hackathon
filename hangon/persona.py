@@ -27,10 +27,11 @@ _STALL_ASKS = {
     "callback_number": "Ask for a number to call them back, and get them to repeat it slowly.",
     "urgency_tactic": "Ask, worried, what happens if you can't do it today.",
 }
-_SCREEN_ASKS = {
+_SCREEN_ASKS = {  # used only while that evidence is missing
     "claimed_org": "Ask which organization they are calling from.",
     "callback_number": "Ask for a number where they can be reached.",
 }
+_SCREEN_ALWAYS = ("Ask what the call is about.", "Ask for their name.")
 
 # Rotated so consecutive turns never use the same stalling move.
 STALL_TACTICS = (
@@ -52,6 +53,18 @@ def greeting(p: Persona) -> str:
     return GREETING.format(name=p.name)
 
 
+def exact_line(p: Persona, mode: Mode) -> str | None:
+    """Lines that carry information the caller must hear are fixed, not improvised (Higgs still speaks them)."""
+    n = p.name
+    return {
+        Mode.GREET: greeting(p),
+        Mode.HANDOFF: f"Thank you. One moment, I'll put you through to {n}.",
+        Mode.HOLD: (f"Thank you. {n} can't come to the phone right now, but I'll let them know you called, "
+                    "and they'll call you back on your organization's official number."),
+        Mode.TAKE_MESSAGE: f"I'm sorry, I couldn't quite catch what this is about. I'll let {n} know you called. Goodbye.",
+    }.get(mode)
+
+
 def base_prompt(p: Persona) -> str:
     return (
         f"You are answering the phone for {p.name}, an older person. You are speaking aloud: one or two "
@@ -64,27 +77,21 @@ def base_prompt(p: Persona) -> str:
 
 def mode_instructions(p: Persona, mode: Mode) -> str:
     n = p.name
-    if mode is Mode.GREET:
-        return f'Say exactly this and nothing else: "{greeting(p)}"'
+    exact = exact_line(p, mode)
+    if exact:
+        return f'Say exactly this and nothing else: "{exact}"'
     if mode is Mode.SCREEN:
-        return (f"You are {n}'s assistant. Politely ask one short, neutral question to find out who is calling, "
-                "which organization they are with, or what it is about. Do not agree to anything, and do not "
+        return (f"You are {n}'s assistant. Briefly acknowledge what they just said, then ask one short, neutral "
+                "question. Never ask for something they have already told you. Do not agree to anything, and do not "
                 "comment on whether the call is genuine.")
     if mode is Mode.STALL:
         return (f"You are now {n}, age {p.age}, {p.backstory}. You have taken the phone from your assistant. "
                 f"Be warm, a bit confused, and slow to understand. {_CHATTINESS.get(p.chattiness, '')} "
-                "Keep them talking. Never give real information, never agree to pay, and never end the call yourself.")
-    if mode is Mode.HANDOFF:
-        return 'Say one short sentence such as "Oh, one moment, I\'ll put you through." Nothing else.'
-    if mode is Mode.HOLD:
-        return (f"Politely say {n} can't come to the phone right now, you will pass on that they called, "
-                "and that they will call back using the organization's official number. One or two short sentences.")
-    if mode is Mode.TAKE_MESSAGE:
-        return (f"Politely say you couldn't quite catch what this is about, that you will pass a message to {n}, "
-                "and say goodbye. Two short sentences.")
+                "Keep them talking. Use each excuse (your hearing, finding a pen, your glasses, the cat) at most once "
+                "in the whole call. Never give real information, never agree to pay, and never end the call yourself.")
     if mode is Mode.GOODBYE:
-        return (f"You are {n}. Make a warm, natural excuse to end the call and say goodbye. Stay friendly and "
-                "fully in character. Two short sentences.")
+        return (f"You are {n}. Make a warm, natural excuse to end the call, and end with the word goodbye. "
+                "Stay friendly and fully in character. Two short sentences.")
     raise ValueError(mode)
 
 
@@ -101,14 +108,18 @@ def turn_guidance(p: Persona, mode: Mode, evidence: Evidence, turn: int,
         if missing:
             parts.append("Then: " + _STALL_ASKS[missing[0]])
     elif mode is Mode.SCREEN:
-        ask = next((_SCREEN_ASKS[f] for f in missing if f in _SCREEN_ASKS), "Ask what the call is about.")
-        parts.append("This turn: " + ask)
+        asks = [_SCREEN_ASKS[f] for f in missing if f in _SCREEN_ASKS] + list(_SCREEN_ALWAYS)
+        parts.append("This turn: " + asks[turn % len(asks)])  # rotate so an evasive caller gets varied questions
     elif mode is Mode.GOODBYE:
         parts.append(f"Your excuse: {GOODBYE_EXCUSES[turn % len(GOODBYE_EXCUSES)]}.")
 
-    if last_line and mode is not Mode.GREET:
-        # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
-        parts.append("Say something new: do not repeat or rephrase anything you have already said.")
+    if mode in (Mode.SCREEN, Mode.STALL, Mode.GOODBYE):
+        if not (mode is Mode.STALL and prev_mode is not Mode.STALL):
+            parts.append("You are mid-conversation: do not open with a greeting like 'hello there' "
+                         "and do not introduce yourself again.")
+        if last_line:
+            # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
+            parts.append("Say something new: do not repeat or rephrase anything you have already said.")
     return " ".join(parts)
 
 

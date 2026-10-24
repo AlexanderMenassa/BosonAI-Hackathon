@@ -38,8 +38,23 @@ def test_previous_line_is_not_quoted_back_but_repeating_is_forbidden():
     assert "Could you repeat that?" not in g and "do not repeat" in g
 
 
-def test_screen_asks_for_the_organization_first():
-    assert "which organization" in turn_guidance(P, Mode.SCREEN, Evidence(), 1, Mode.GREET)
+def test_screening_questions_rotate_and_skip_what_is_known():
+    asks = [turn_guidance(P, Mode.SCREEN, Evidence(), t, Mode.SCREEN) for t in range(4)]
+    assert len({a.split(" You are")[0] for a in asks}) == 4          # four different questions
+    known = [turn_guidance(P, Mode.SCREEN, Evidence(claimed_org="CRA"), t, Mode.SCREEN) for t in range(3)]
+    assert not any("which organization" in k for k in known)        # never re-ask what they said
+
+
+def test_no_greeting_mid_call_but_first_margaret_line_may_introduce_her():
+    assert "do not open with a greeting" in turn_guidance(P, Mode.STALL, Evidence(), 4, Mode.STALL, "x")
+    assert "do not open with a greeting" not in turn_guidance(P, Mode.STALL, Evidence(), 2, Mode.SCREEN, "x")
+
+
+def test_information_carrying_lines_are_exact():
+    from hangon.persona import exact_line, mode_instructions
+    for m in (Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE):
+        assert exact_line(P, m) in mode_instructions(P, m)
+    assert "put you through" in exact_line(P, Mode.HANDOFF)
 
 
 def test_goodbye_gets_a_concrete_excuse():
