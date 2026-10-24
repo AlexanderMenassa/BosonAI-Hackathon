@@ -1,4 +1,4 @@
-"""The conversational agent: speaks as the protected person's assistant. It never decides routing.
+"""The conversational agent: speaks AS the protected person. It never decides routing.
 
 Backends:
 * ScriptedAgent: canned lines, fully offline. For tests and demos without an API key.
@@ -8,9 +8,11 @@ Each turn the agent gets a mode (the role) and guidance (what to do this turn). 
 per-reply instructions on response.create: `python -m hangon.probe` showed Higgs follows these immediately,
 while a mid-call session.update lands late. The session itself only holds the stable base prompt.
 
-Repeat guard: Higgs sometimes copies its own previous reply word for word. If a reply is (nearly) identical to
-something already said, the agent retries once with a firmer instruction, then falls back to a scripted line,
-so a call can never get stuck in a loop.
+Repeat guard: Higgs sometimes copies its own previous reply word for word, or opens every reply with the same stock
+phrase ("Oh, hello there. ...") while the rest differs, which whole-reply similarity cannot see. If a reply is
+(nearly) identical to something already said, or starts the same way, the agent retries once with a firmer
+instruction that names the opening to avoid, then falls back to a scripted line, so a call can never get stuck
+in a loop.
 
 The wire protocol follows Boson's tutorial (boson-ai/higgs-realtime-tutorial) and pipecat-boson.
 """
@@ -27,6 +29,7 @@ from .models import Mode, Persona
 from .persona import base_prompt, build_instructions, exact_line, greeting
 
 REPEAT_SIMILARITY = 0.8   # replies at least this similar to an earlier line count as repeats
+OPENING_WORDS = 3         # a reply that starts with the same first words as an earlier one also counts as a repeat
 
 
 class AgentError(RuntimeError):
@@ -46,18 +49,17 @@ class ScriptedAgent:
 
     def __init__(self, persona: Persona):
         self.p = persona
-        n = persona.name
         self._screen = itertools.cycle([
-            "Sorry, who am I speaking with?",
-            "And what is this regarding, exactly?",
+            "Sorry, dear, who is this?",
+            "And what's this about?",
             "Could you tell me a little more about that?",
         ])
         self._stall = itertools.cycle([
-            f"Of course. Could you tell me a bit more about what you need from {n}?",
-            "How exactly would that work?",
-            "Could I have a number to call you back on, so I can note it down?",
-            "And what happens next?",
-            "Could I have your full name, so I can pass it on?",
+            "Oh my. And what is it you need from me, exactly?",
+            "How would that work, dear?",
+            "Let me find a pen. What number can I call you back on?",
+            "And what happens after that?",
+            "What did you say your name was, dear?",
         ])
 
     async def start(self) -> None:
@@ -113,19 +115,23 @@ class HiggsTextAgent:
     async def say(self, mode: Mode, caller_text: str | None = None, guidance: str = "") -> str:
         if self.ws is None:
             raise AgentError("call start() first")
-        instructions = build_instructions(self.p, mode, guidance)
+        instructions = build_instructions(self.p, mode, guidance, caller_text)
         self._log(f"mode={mode.value}\n      instructions: {instructions}")
 
         if caller_text is not None:
             await self._send({"type": "conversation.item.create", "item": {
                 "type": "message", "role": "user", "content": [{"type": "input_text", "text": caller_text}]}})
 
+        fixed = exact_line(self.p, mode) is not None      # fixed lines are word for word: no opener check
         text = await self._respond(instructions)
-        if self._is_repeat(text):
+        if self._is_repeat(text, check_opening=not fixed):
             self._log("REPEAT detected; retrying once with a firmer instruction")
+            avoid = self._opening(text)
+            hint = f" Do not begin with the words '{avoid}'." if avoid and not fixed else ""
             text = await self._respond(instructions + " IMPORTANT: your last reply repeated something you had "
-                                       "already said. Write a completely new reply that follows this turn's instructions.")
-            if self._is_repeat(text):
+                                       "already said or started the same way as an earlier reply. Write a "
+                                       "completely new reply that follows this turn's instructions." + hint)
+            if self._is_repeat(text, check_opening=not fixed):
                 text = await self._fallback.say(mode, caller_text)
                 self._log(f"still repeating; using scripted fallback line: {text!r}")
         self._said.append(text)
@@ -138,12 +144,24 @@ class HiggsTextAgent:
         await self._send({"type": "response.create", "response": {"instructions": instructions}})
         return await self._collect_text()
 
-    def _is_repeat(self, text: str) -> bool:
+    @staticmethod
+    def _norm(t: str) -> str:
+        return re.sub(r"[^a-z0-9 ]", "", t.lower()).strip()
+
+    def _opening(self, text: str) -> str:
+        """The first few words of a reply ('oh hello there'), or '' if it is too short to have one."""
+        words = self._norm(text).split()
+        return " ".join(words[:OPENING_WORDS]) if len(words) > OPENING_WORDS else ""
+
+    def _is_repeat(self, text: str, check_opening: bool = True) -> bool:
         if not text.strip():
             return True  # an empty reply is as useless as a repeat
-        norm = lambda t: re.sub(r"[^a-z0-9 ]", "", t.lower()).strip()
-        new = norm(text)
-        return any(difflib.SequenceMatcher(None, new, norm(old)).ratio() >= REPEAT_SIMILARITY for old in self._said)
+        new = self._norm(text)
+        if any(difflib.SequenceMatcher(None, new, self._norm(old)).ratio() >= REPEAT_SIMILARITY for old in self._said):
+            return True
+        # Same stock opening as an earlier reply ("Oh, hello there. ..."), even though the rest differs.
+        opening = self._opening(text)
+        return bool(check_opening and opening and any(opening == self._opening(old) for old in self._said))
 
     # ---- protocol helpers
     def _log(self, msg: str) -> None:

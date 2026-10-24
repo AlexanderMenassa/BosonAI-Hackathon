@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -465,27 +466,47 @@ class OllamaClassifier(LLMClassifier):
         return reply["message"]["content"]
 
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+RETRY_WAIT_SECONDS = 15  # free-tier rate limits are per minute; wait this long (then twice, three times) and retry
+
+
+def gemini_generate(api_key: str, model: str, system: str, user: str, timeout: float = 15.0,
+                    base_url: str = GEMINI_URL, retries: int = 0) -> str:
+    """One Gemini generateContent call that must return JSON. On HTTP 429 (rate limited) it waits and retries
+    `retries` times; live calls use 0 and fall back instead, test runs use a few so results stay honest."""
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+    }
+    for attempt in range(retries + 1):
+        try:
+            reply = post_json(f"{base_url.rstrip('/')}/models/{model}:generateContent", body,
+                              {"x-goog-api-key": api_key}, timeout)
+            break
+        except RuntimeError as e:
+            if "HTTP 429" not in str(e) or attempt == retries:
+                raise
+            log.warning("Gemini rate limit hit; waiting %ss before retrying", RETRY_WAIT_SECONDS * (attempt + 1))
+            time.sleep(RETRY_WAIT_SECONDS * (attempt + 1))
+    candidates = reply.get("candidates") or []
+    if not candidates:  # e.g. the prompt was blocked: the reply explains why
+        raise RuntimeError(f"no answer from Gemini: {json.dumps(reply)[:300]}")
+    return "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
+
+
 class GeminiClassifier(LLMClassifier):
     """Google's hosted Gemini API (generateContent). Fast, but transcripts are sent to Google, and on the free
     tier Google may use them to improve its products. Get a key at https://aistudio.google.com."""
 
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-
     def __init__(self, api_key: str, model: str = "gemini-3.5-flash-lite", timeout: float = 15.0,
-                 fallback: Classifier | None = None, base_url: str = BASE_URL):
+                 fallback: Classifier | None = None, base_url: str = GEMINI_URL, retries: int = 0):
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not set (put it in .env)")
         super().__init__(fallback)
-        self.api_key, self.model, self.timeout, self.base_url = api_key, model, timeout, base_url.rstrip("/")
+        self.api_key, self.model, self.timeout, self.base_url, self.retries = \
+            api_key, model, timeout, base_url, retries
         self.name = f"gemini:{model}"
 
     def complete(self, system: str, user: str) -> str:
-        reply = post_json(f"{self.base_url}/models/{self.model}:generateContent", {
-            "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": user}]}],
-            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
-        }, {"x-goog-api-key": self.api_key}, self.timeout)
-        candidates = reply.get("candidates") or []
-        if not candidates:  # e.g. the prompt was blocked: the reply explains why
-            raise RuntimeError(f"no answer from Gemini: {json.dumps(reply)[:300]}")
-        return "".join(part.get("text", "") for part in candidates[0]["content"]["parts"])
+        return gemini_generate(self.api_key, self.model, system, user, self.timeout, self.base_url, self.retries)

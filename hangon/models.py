@@ -133,7 +133,11 @@ class ClassifierResult:
 
 @dataclass
 class Persona:
-    name: str = "Margaret"            # the protected person; the agent is always her assistant
+    """The protected person. The agent answers AS this person, so a scammer drops the act it would keep up
+    for a gatekeeper."""
+    name: str = "Margaret"
+    age: int = 78
+    backstory: str = "a retired schoolteacher who lives alone in Toronto with her cat Biscuit"
 
 
 @dataclass

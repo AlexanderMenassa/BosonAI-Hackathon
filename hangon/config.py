@@ -48,6 +48,8 @@ class Settings:
     # Higgs Realtime
     boson_api_key: str = ""
     higgs_model: str = "higgs-realtime"  # run `python -m hangon.list_models` to see what your key can use
+    # Margaret's voice: a preset (default, eleanor, nora, chloe, ...) or a voice_id from `python -m hangon.voices`
+    higgs_voice: str = "default"
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
 
     # Voice: how sure Higgs's speech detector must be (0..1; server default 0.55), and the fewest words that count
@@ -79,6 +81,7 @@ class Settings:
             gemini_timeout=float(e.get("GEMINI_TIMEOUT", 15)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
             higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),
+            higgs_voice=e.get("HIGGS_VOICE", "default"),
             boson_url=e.get("BOSON_REALTIME_URL",
                             f"wss://api.boson.ai/v1/realtime?model={e.get('HIGGS_MODEL', 'higgs-realtime')}"),
             vad_threshold=float(e.get("HANGON_VAD_THRESHOLD", 0.8)),

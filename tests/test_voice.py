@@ -129,7 +129,7 @@ def test_scam_voice_call_says_goodbye_as_soon_as_it_is_a_scam_and_blocks(tmp_pat
     assert session.outcome is Outcome.SCAM_ENDED and call.store.is_blocked(call.number)
     creates = [e for e in received if e["type"] == "response.create"]
     assert len(creates) == 3                                   # greeting, one screening reply, the goodbye
-    assert "Who's calling?" in creates[0]["response"]["instructions"]
+    assert 'Say exactly this and nothing else: "Hello?"' in creates[0]["response"]["instructions"]
     assert "Still unknown" in creates[1]["response"]["instructions"]     # turn 1: only naming the CRA, so screening
     assert "Goodbye" in creates[-1]["response"]["instructions"]          # turn 2: the warrant threat
     assert call.audio.played and call.audio.stopped

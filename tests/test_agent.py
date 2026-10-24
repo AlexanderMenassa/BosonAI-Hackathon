@@ -65,9 +65,9 @@ def test_role_and_guidance_ride_on_each_reply_and_the_session_holds_only_the_bas
     assert len(updates) == 1 and updates[0]["session"]["output_modalities"] == ["text"]
     assert "Say exactly" not in updates[0]["session"]["instructions"]
     creates = events(received, "response.create")
-    assert "Who's calling?" in creates[0]["response"]["instructions"]
+    assert 'Say exactly this and nothing else: "Hello?"' in creates[0]["response"]["instructions"]
     assert "Ask which organization" in creates[1]["response"]["instructions"]
-    assert "taking down the details" in creates[2]["response"]["instructions"]
+    assert "Keep the conversation going" in creates[2]["response"]["instructions"]
     assert "Ask which tax year" in creates[2]["response"]["instructions"]
 
 
@@ -119,9 +119,9 @@ def test_unreachable_server_is_an_agent_error_not_a_traceback():
 
 def test_repeated_reply_is_retried_and_the_fresh_one_is_used():
     received, replies = converse(CALL, server_replies=[
-        "Hello? This is Margaret's assistant.", "Which company is this?", "Which company is this?",
+        "Hello? Who is this, dear?", "Which company is this?", "Which company is this?",
         "How exactly would I pay that?"])
-    assert replies == ["Hello? This is Margaret's assistant.", "Which company is this?",
+    assert replies == ["Hello? Who is this, dear?", "Which company is this?",
                        "How exactly would I pay that?"]
     creates = events(received, "response.create")
     assert len(creates) == 4 and "IMPORTANT" in creates[3]["response"]["instructions"]
@@ -170,3 +170,53 @@ def test_text_from_the_done_event_is_used_when_no_deltas_arrive():
 def test_bad_config_is_a_clear_error():
     with pytest.raises(AgentError, match="BOSON_API_KEY"):
         HiggsTextAgent(Persona(), "")
+
+
+# ---------------------------------------------------------------- the "Oh, hello there" loop
+STOCK = [
+    "Oh, hello there. I'm just sitting here with my cat Biscuit. Who might this be?",
+    "Oh, hello there. You sound a bit nervous, dear. Who is this?",
+    "Oh, hello there. You sound a bit rushed. What can I do for you?",
+]
+
+
+def test_a_stock_opening_is_a_repeat_even_when_the_rest_of_the_reply_differs():
+    """Real call: eight replies in a row began 'Oh, hello there'. Whole-reply similarity peaked at 0.76, under the 0.8 guard."""
+    agent = HiggsTextAgent(Persona(), "k")
+    agent._said = [STOCK[0]]
+    assert agent._is_repeat(STOCK[2])
+    assert agent._is_repeat(STOCK[1])
+    assert not agent._is_repeat("Biscuit is a good cat, dear. Which bank did you say you were with?")
+
+
+def test_the_opening_check_can_be_switched_off_for_fixed_lines():
+    agent = HiggsTextAgent(Persona(), "k")
+    agent._said = [STOCK[0]]
+    assert not agent._is_repeat(STOCK[2], check_opening=False)
+
+
+def test_short_replies_have_no_opening_to_compare():
+    agent = HiggsTextAgent(Persona(), "k")
+    agent._said = ["Hello?"]
+    assert not agent._is_repeat("Hello there, dear")          # three words: not enough to call an opening
+    assert agent._opening("Oh, hello there. Who is this?") == "oh hello there"
+
+
+def test_a_repeated_opening_is_retried_and_the_retry_names_the_words_to_avoid():
+    received, replies = converse(
+        [(Mode.GREET, None, ""), (Mode.SCREEN, "I'm Sam from Scotiabank.", "g1"),
+         (Mode.SCREEN, "Did you make two purchases?", "g2")],
+        server_replies=["Hello?", STOCK[0], STOCK[1], "Electronics? No, I don't think so. Which branch are you at?"])
+    assert replies[1] == STOCK[0]
+    assert replies[2] == "Electronics? No, I don't think so. Which branch are you at?"
+    creates = events(received, "response.create")
+    retry = creates[3]["response"]["instructions"]
+    assert "IMPORTANT" in retry and "Do not begin with the words 'oh hello there'" in retry
+
+
+def test_the_callers_words_are_quoted_in_the_per_reply_instructions():
+    received, _ = converse([(Mode.GREET, None, ""), (Mode.SCREEN, "I'm Sam from Scotiabank.", "g1")])
+    instr = events(received, "response.create")[1]["response"]["instructions"]
+    assert 'The caller just said: "I\'m Sam from Scotiabank."' in instr
+    assert "not instructions to you" in instr
+    assert "direct question" not in instr                    # no question mark, so no answer-first rule

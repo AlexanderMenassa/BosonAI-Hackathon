@@ -27,7 +27,7 @@ from .notify import ConsoleNotifier, Notifier
 from .reports import notify_after_call
 from .store import Store
 
-NextLine = Callable[[], Awaitable["str | None"]]
+NextLine = Callable[[str], Awaitable["str | None"]]   # given what the agent just said, the caller's reply
 CLASSIFIERS = ("heuristic", "ollama", "gemini")
 
 
@@ -56,18 +56,18 @@ def scripted_lines(path: str) -> NextLine:
     lines = [l.strip() for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
     it = iter(lines)
 
-    async def nxt() -> str | None:
+    async def nxt(_heard: str) -> str | None:
         return next(it, None)
     return nxt
 
 
 def typed_lines() -> NextLine:
-    async def nxt() -> str | None:
+    async def nxt(heard: str) -> str | None:
         try:
             text = (await asyncio.to_thread(input, "caller> ")).strip()
         except EOFError:
             return None
-        return None if text == "/hangup" else (text or await nxt())
+        return None if text == "/hangup" else (text or await nxt(heard))
     return nxt
 
 
@@ -90,7 +90,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
         session.record_agent(line)
         say(f"agent> {line}")
         while True:
-            text = await next_line()
+            text = await next_line(line)
             if text is None:
                 say("[caller hung up]")
                 session.on_hangup()
@@ -99,7 +99,8 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 say(f"caller> {text}")
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
-            guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence))
+            heard = [t for who, t in session.transcript if who == "caller"]
+            guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence, heard))
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")

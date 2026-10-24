@@ -100,8 +100,8 @@ class VoiceCall:
             },
         }}
 
-    async def speak(self, mode: Mode, guidance: str = "") -> None:
-        instructions = build_instructions(self.persona, mode, guidance)
+    async def speak(self, mode: Mode, guidance: str = "", caller_text: str | None = None) -> None:
+        instructions = build_instructions(self.persona, mode, guidance, caller_text)
         self.dbg(f"mode={mode.value} instructions: {instructions}")
         # One reply at a time: wait for the previous one to finish (or be cancelled by an interruption).
         for _ in range(100):
@@ -262,11 +262,12 @@ class VoiceCall:
             d = await asyncio.to_thread(self.session.on_caller_turn, text)
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
-            guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence))
+            heard = [t for w, t in self.session.transcript if w == "caller"]
+            guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence, heard))
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")
-            await self.speak(d.mode, guidance)
+            await self.speak(d.mode, guidance, text)
 
     async def _finish_after_playback(self) -> None:
         """Let the last line finish playing, then forward or end the call."""
@@ -290,12 +291,13 @@ async def _main_async(args, settings: Settings) -> None:
     from .sim import make_classifier
     store = Store(settings.db_path)
     audio = SoundDeviceIO(args.input_device, args.output_device, mute_mic_while_playing=args.no_barge_in)
-    print(f"model: {settings.higgs_model}")
+    voice = args.voice or settings.higgs_voice
+    print(f"model: {settings.higgs_model}   voice: {voice}")
     print(f"audio: mic {audio.in_rate} Hz, speaker {audio.out_rate} Hz"
           f"{'  (mic muted while the agent speaks)' if args.no_barge_in else '  (use headphones)'}")
     call = VoiceCall(args.number, make_classifier(args.classifier, settings), store, settings,
                      ConsoleNotifier(settings.reports_dir), audio, Persona(name=args.persona_name),
-                     voice=args.voice, stt_language=args.language, debug=args.debug)
+                     voice=voice, stt_language=args.language, debug=args.debug)
 
     loop = asyncio.get_running_loop()
 
@@ -323,7 +325,7 @@ def main() -> None:
     ap.add_argument("--number", default="+14165550900", help="caller's phone number (pretend)")
     ap.add_argument("--classifier", choices=CLASSIFIERS, default="heuristic")
     ap.add_argument("--persona-name", default="Margaret")
-    ap.add_argument("--voice", default="default", help="Higgs voice preset or registered voice id")
+    ap.add_argument("--voice", help="voice preset or registered voice_id (default: HIGGS_VOICE from .env)")
     ap.add_argument("--language", default="en", help="transcription language; '' to let Higgs detect it")
     ap.add_argument("--no-barge-in", action="store_true", help="mute the mic while the agent speaks (no headphones)")
     ap.add_argument("--input-device", type=int)
