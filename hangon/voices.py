@@ -1,10 +1,10 @@
-"""Give Margaret an older person's voice: register reference audio as a reusable Higgs voice.
+"""Give the persona an older person's voice: register reference audio as a reusable Higgs voice.
 
-None of Boson's preset voices sound elderly, so make one from a sample. Download an older woman's MP3 and its
+None of Boson's preset voices sound elderly, so make one from a sample. Download an older man's (or woman's) MP3 and its
 transcript from the hackathon voice library (boson-hackathon-voices.pages.dev), then:
 
-    python -m hangon.voices create old_lady.mp3 --text "the exact words spoken in the clip"
-    python -m hangon.voices create old_lady.mp3 --text-file old_lady.txt --title "Margaret"
+    python -m hangon.voices create old_man.mp3 --text "the exact words spoken in the clip"
+    python -m hangon.voices create old_man.mp3 --text-file old_man.txt --title "Walter"
     python -m hangon.voices list
 
 `create` prints a voice_id; put it in .env as HIGGS_VOICE=<voice_id>. Creating the same audio twice returns the
@@ -52,7 +52,7 @@ def main() -> None:
     words = c.add_mutually_exclusive_group(required=True)
     words.add_argument("--text", help="exact transcript of the clip")
     words.add_argument("--text-file", help="file holding the exact transcript")
-    c.add_argument("--title", default="Margaret")
+    c.add_argument("--title", default="Walter")
     sub.add_parser("list", help="show your registered voices")
     args = ap.parse_args()
 

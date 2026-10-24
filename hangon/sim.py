@@ -144,7 +144,7 @@ def main() -> None:
     ap.add_argument("--scenario", help="text file with one caller line per line")
     ap.add_argument("--classifier", choices=CLASSIFIERS, default="heuristic")
     ap.add_argument("--agent", choices=["scripted", "higgs"], default="scripted")
-    ap.add_argument("--persona-name", default="Margaret")
+    ap.add_argument("--persona-name", default="Walter")
     ap.add_argument("--debug", action="store_true", help="print what is sent to and received from Higgs")
     ap.add_argument("--db", help="sqlite path (default from HANGON_DB)")
     ap.add_argument("--list-blocked", action="store_true")

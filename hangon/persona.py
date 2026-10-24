@@ -1,4 +1,4 @@
-"""Prompts for the conversational agent, which answers AS the protected person (Margaret), never as an assistant.
+"""Prompts for the conversational agent, which answers AS the protected person (Walter, by default), never as an assistant.
 
 Why: a scammer stays polite and plausible with a gatekeeper, hoping to be put through. Talking to the person they
 think is their target, they make their pitch, and the pitch is what the judge needs to hear.

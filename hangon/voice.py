@@ -17,8 +17,8 @@ How a turn works (same brain as the text simulator):
          the probe)
       -> Higgs speaks; audio plays through the speakers
     The classifier never holds up the conversation. If its verdict is ready within HANGON_CLASSIFIER_GRACE seconds
-    it picks the reply as usual; if not, Margaret answers with a normal screening reply straight away and the
-    verdict is applied when it lands. A forward / hang-up verdict that arrives late is carried out right after her
+    it picks the reply as usual; if not, the agent answers with a normal screening reply straight away and the
+    verdict is applied when it lands. A forward / hang-up verdict that arrives late is carried out right after the
     current line (the closing line is queued behind it), never over the caller.
     caller talks over the agent -> server stops generating (interrupt_response=true), we flush the speaker
       and truncate its stored reply to what the caller actually heard. A short noise during the agent's reply is
@@ -288,7 +288,7 @@ class VoiceCall:
                 continue
             self.log(f"caller> {text}")
             # Records the turn at once. Returns the real decision if the classifier is quick, otherwise a
-            # provisional "keep screening" so Margaret answers without a dead pause; the verdict then arrives
+            # provisional "keep screening" so the agent answers without a dead pause; the verdict then arrives
             # through _late_worker.
             d = await self.pipeline.submit(text)
             heard = [t for w, t in self.session.transcript if w == "caller"]
@@ -301,7 +301,7 @@ class VoiceCall:
             await self.speak(d.mode, guidance, text, heard[:-1], closing=closing)
 
     async def _late_worker(self) -> None:
-        """Carry out a forward / hang-up verdict that was not ready when Margaret had to answer."""
+        """Carry out a forward / hang-up verdict that was not ready when the agent had to answer."""
         while not self.done.is_set():
             d = await self.pipeline.late.get()
             if self.session.ended or self.done.is_set():
@@ -311,7 +311,7 @@ class VoiceCall:
             await self._wait_for_quiet()
             if self.session.ended or self.done.is_set():
                 return
-            # Queued behind her current line by speak(); every closing mode is a fixed line.
+            # Queued behind the current line by speak(); every closing mode is a fixed line.
             await self.speak(d.mode, closing=d.action)
 
     async def _wait_for_quiet(self, timeout: float = 3.0) -> None:
@@ -378,7 +378,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--number", default="+14165550900", help="caller's phone number (pretend)")
     ap.add_argument("--classifier", choices=CLASSIFIERS, default="heuristic")
-    ap.add_argument("--persona-name", default="Margaret")
+    ap.add_argument("--persona-name", default="Walter")
     ap.add_argument("--voice", help="voice preset or registered voice_id (default: HIGGS_VOICE from .env)")
     ap.add_argument("--language", default="en", help="transcription language; '' to let Higgs detect it")
     ap.add_argument("--no-barge-in", action="store_true", help="mute the mic while the agent speaks (no headphones)")

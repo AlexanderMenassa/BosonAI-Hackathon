@@ -55,7 +55,7 @@ class Settings:
     # Higgs Realtime
     boson_api_key: str = ""
     higgs_model: str = "higgs-realtime"  # run `python -m hangon.list_models` to see what your key can use
-    # Margaret's voice: a preset (default, eleanor, nora, chloe, ...) or a voice_id from `python -m hangon.voices`
+    # The agent's voice: a preset (default, eleanor, nora, chloe, ...) or a voice_id from `python -m hangon.voices`
     higgs_voice: str = "default"
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
 
