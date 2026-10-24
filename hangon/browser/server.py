@@ -157,11 +157,10 @@ class Room:
             if token != current.token or current.socket is not None:
                 raise GatewayError("role occupied or invalid resume token")
             current.socket = socket
-            current.ready = False
             return current
         if token:
             raise GatewayError("resume token not found")
-        participant = Participant(role, secrets.token_urlsafe(24), socket)
+        participant = Participant(role, secrets.token_urlsafe(24), socket, ready=role == "receiver")
         setattr(self, role, participant)
         return participant
 
@@ -403,7 +402,6 @@ class Room:
             if participant.socket is not socket:
                 return
             participant.socket = None
-            participant.ready = False
             g = self.gateway
             if g.incoming and g.state is not State.ENDED:
                 if participant.role == "caller":

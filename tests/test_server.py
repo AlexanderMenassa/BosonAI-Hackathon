@@ -7,7 +7,7 @@ from websockets.asyncio.server import serve
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
 from hangon.media import OutboundAudio
-from hangon.server import Hub, demo_number, static_page
+from hangon.server import Hub, Room, demo_number, static_page
 from hangon.store import Store
 
 TRUSTED = "+14165550001"
@@ -37,6 +37,18 @@ def test_demo_number_accepts_formatted_test_numbers():
         demo_number("555")
     with pytest.raises(GatewayError):
         demo_number("4165550101;drop")
+
+
+def test_receiver_offline_choice_survives_rejoin(tmp_path):
+    room = Room("demo", Store(str(tmp_path / "demo.db")))
+    first_socket = object()
+    receiver = room.bind("receiver", first_socket)
+    assert room.receiver_available()
+    receiver.ready = False
+    receiver.socket = None
+    resumed = room.bind("receiver", object(), receiver.token)
+    assert resumed is receiver
+    assert not room.receiver_available()
 
 
 def test_receiver_lists_control_subsequent_call_routes(tmp_path):
@@ -170,6 +182,38 @@ def test_two_browser_sessions_and_routes(tmp_path):
                     await asyncio.sleep(0)
             await asyncio.wait_for(finalized(), 2)
             assert store.call_by_request("unknown-1")["outcome"] == "hangup_unsure"
+    asyncio.run(scenario())
+
+
+def test_joined_receiver_rings_after_unknown_caller_is_approved(tmp_path):
+    async def scenario():
+        hub = Hub(Store(str(tmp_path / "demo.db")))
+        async with serve(hub.socket_handler, "127.0.0.1", 0, process_request=static_page) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/ws"
+            async with connect(url) as caller, connect(url) as receiver:
+                await caller.send(json.dumps({"type": "room.create"}))
+                c = await receive_type(caller, "room.joined")
+                await receive_type(caller, "room.state")
+                await receiver.send(json.dumps({"type": "room.join", "room": c["room"], "role": "receiver"}))
+                await receive_type(receiver, "room.joined")
+                receiver_state = await receive_type(receiver, "room.state")
+                await receive_type(caller, "room.state")
+                assert receiver_state["receiver_ready"] is True
+
+                await send(caller, c["token"], type="call.start", number=UNKNOWN,
+                           request_id="screened")
+                state = await receive_type(caller, "room.state")
+                await receive_type(receiver, "room.state")
+                assert state["state"] == "screening"
+                for line in ("Hi, this is Riverside Pharmacy calling.",
+                             "Margaret's prescription is ready for pickup."):
+                    await send(caller, c["token"], type="call.line", call_id=state["call_id"], text=line)
+                    state = await receive_type(caller, "room.state")
+                    receiver_state = await receive_type(receiver, "room.state")
+                assert state["state"] == receiver_state["state"] == "ringing"
+                assert any(event["type"] == "call.screening_approved" for event in state["events"])
+                assert not any(event["type"] == "call.message_requested" for event in state["events"])
+
     asyncio.run(scenario())
 
 
