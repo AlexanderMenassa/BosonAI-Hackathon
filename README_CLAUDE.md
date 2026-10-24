@@ -1,5 +1,7 @@
 # Hang On: AI call screening (MVP)
 
+> Historical terminal-prototype notes. For current browser implementation, phase status, and launch steps, use [README.md](README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The test count and voice scope below describe the earlier prototype.
+
 Answers unknown calls for a protected person, tells scammers from legitimate callers in real time,
 stalls scammers while collecting evidence, and hands legitimate callers through.
 

@@ -31,13 +31,13 @@ Boson's [official Toronto 2026 announcement](https://www.boson.ai/blog/mscac-hig
 | Area | Present in the repository | Remaining for the target demo |
 | --- | --- | --- |
 | Call gateway | Browser number lookup routes through the gateway; terminal simulator also checks lists | Phone-provider adapter and live acceptance checks |
-| Call flow | Python decision engine and terminal simulator | Two-device room pairing, receiver presence, ringing/accept/decline, real audio handoff |
+| Call flow | Python decision engine, terminal simulator, role-bound browser rooms, ringing and call controls | Live two-device acceptance of audio handoff and failure paths |
 | Classification | Keyword baseline and Ollama adapter | Live-model evaluation, quote-backed assessments, stale-result protection |
-| Conversation | Scripted responses and Higgs Realtime text adapter | Live audio, transcription, playback, interruptions |
+| Conversation | Scripted and Higgs text adapters; browser audio bridge and Higgs audio adapter covered by local fake-server tests | Live Higgs audio, transcription, playback, and interruption checks |
 | Policy | Routing, high-stakes checks, call limits | Validate behavior under asynchronous audio and failures |
 | Storage | SQLite contacts, blocklist, call logs | Dashboard access and isolated demo reset |
 | Reports | Text summaries and simulated notifications | Visual transcript and evidence cards |
-| Verification | Existing tests and offline scenario baseline pass | Regression checks for new work and browser integration acceptance checks |
+| Verification | Offline tests cover gateway, browser signaling, and synthetic audio paths | Live provider and two-device browser acceptance checks |
 
 **Planning baseline:** the existing tests pass, and all required Higgs APIs are assumed to work. API availability, credentials, credits, and standalone Higgs smoke tests are not remaining roadmap tasks. This is a planning assumption, not a claim that new browser integration is already implemented. The separate classifier still needs evaluation on the completed screening flow. The existing implementation notes are in [README_CLAUDE.md](README_CLAUDE.md); this roadmap defines the intended browser-first scope where those older notes differ.
 
@@ -58,7 +58,7 @@ flowchart TD
     Gateway --> Dashboard[Screening report and connection state]
 ```
 
-The backend bridge is the proposed demo topology: each browser connects to it, and it changes the permitted audio route. A direct browser-to-browser connection is not required. During screening only the caller and Higgs exchange audio; after receiver acceptance only the two people exchange audio through the bridge.
+The backend bridge is implemented and covered by local synthetic tests: each browser connects to it, and it changes the permitted audio route. A direct browser-to-browser connection is not required. During screening only the caller and Higgs exchange audio; after receiver acceptance only the two people exchange audio through the bridge. The full live flow on two devices still needs acceptance testing.
 
 
 ### Call gateway responsibilities
@@ -80,7 +80,7 @@ Track one call ID from arrival to completion. Handle duplicate arrival/handoff e
 
 **Higgs speaks; the classifier assesses; backend code decides.** Neither model can authorize a transfer, change limits, or directly block a caller.
 
-Reuse the Python core. A small FastAPI server, a WebRTC bridge such as aiortc or a compatible Pipecat transport, and a simple browser frontend are proposed additions. Choose the bridge after proving one audio round trip; do not assume Boson's documented WebSocket endpoint accepts WebRTC directly.
+The browser adapter uses a `websockets` server, an `aiortc` media bridge, and the `web/` frontend. The backend connects to Boson over a separate WebSocket; the browsers connect to the backend over WebRTC.
 
 | Existing component | Planned use |
 | --- | --- |
@@ -180,7 +180,7 @@ Estimates below are planning budgets for two people, not verified task durations
 
 Remaining interface details belong to the implementation phases below; closed setup issues do not imply that browser event contracts or new features already exist.
 
-**Next action:** integrate browser audio and Higgs handoff in Phase 2B.
+**Next action:** complete live Phase 2B acceptance with Higgs and two physical devices.
 
 ### Phase 2A — Gateway and two-browser call controls (complete: control-only)
 
@@ -194,13 +194,13 @@ Remaining interface details belong to the implementation phases below; closed se
 
 **Observed:** two independent browser sessions demonstrated all three routes and the gateway's event sequence. The screening and receiver transports in this phase record control operations only. No Higgs session, browser microphone, WebRTC audio, or human audio connection is claimed. Those are Phase 2B checks.
 
-Run the local control demo with the project environment:
+Run the current browser server with the project environment:
 
 ```bash
 .venv/bin/python -m hangon.server --port 8765
 ```
 
-The current browser UI uses caller-entered test numbers and receiver-managed lists; use the Phase 2B instructions below for live audio. The Phase 2A localhost exercise used control-only transports and did not prove browser microphone or human audio.
+The current browser UI uses caller-entered test numbers and receiver-managed lists; use the Phase 2B instructions below for live audio. The earlier Phase 2A localhost exercise used control-only transports and did not prove browser microphone or human audio.
 
 ### Phase 2B — Integrate two-device audio and Higgs handoff (3–4 hours; critical path)
 
@@ -219,13 +219,13 @@ Set `HANGON_STUN_URL` if needed. For relay access, set `HANGON_TURN_URL` and `HA
 For the explicit acceptance run, record the browser and device on each side, network and TURN route, whether Higgs spoke and transcribed the caller, whether an approved call rang and carried two-way human audio, interruption behavior, and whether End from each side released both microphones. Keep the offline `python scripts/verify.py` result separate from this live record.
 
 - [ ] Serve both role views over a shared HTTPS/WSS deployment; configure reachable media networking and TURN relay support.
-- [ ] Add caller Call/End and receiver Ready/Accept/Decline/End controls, microphone permission handling, and connection status.
-- [ ] Connect browser WebRTC audio through the backend to Higgs only after the gateway returns `SCREEN`.
-- [ ] Receive Higgs voice playback and finalized caller transcripts during screening.
-- [ ] On approved receiver acceptance, detach Higgs and route caller/receiver audio in both directions through the backend bridge; prevent screening audio leakage.
-- [ ] Separate screening completion from human-call completion in the engine/session adapter; store both outcomes without closing accepted calls early.
-- [ ] Test interruption handling with headphones to avoid speaker feedback.
-- [ ] Stop audio, cancel pending work, and close connections on hang-up.
+- [x] Add caller Call/End and receiver Ready/Accept/Decline/End controls, microphone permission handling, and connection status in the browser UI.
+- [x] Implement the backend WebRTC bridge and route screening audio to the Higgs adapter after `SCREEN`; local synthetic tests cover the path.
+- [x] Handle Higgs audio output and finalized caller transcripts in the adapter; local fake-server tests cover both.
+- [x] Detach the screening route before enabling the accepted human route; local synthetic peers exchanged audio.
+- [x] Persist screening completion separately from the final human-call outcome.
+- [ ] Verify live Higgs speech, interruption, two-device handoff, and hang-up behavior with headphones.
+- [ ] Verify the shared HTTPS/WSS deployment and TURN relay on the intended network.
 
 **Done when:** on two separate devices, you complete screening with Higgs, your teammate accepts the ring, and both of you hear each other without Higgs audio. Trusted calls connect without Higgs, and either person can end the call for both browsers.
 

@@ -24,12 +24,12 @@ Use one Mac to run Hang On and one phone or computer as the second device. Both 
    ```
 
 3. Copy the HTTPS address shown by `tailscale serve status`. It will look like `https://<machine>.<tailnet>.ts.net`. The exact address is specific to your Mac.
-4. In `.env`, set `HANGON_PUBLIC_ORIGIN` to that address, without a trailing slash. Restart the app if you changed this setting.
-5. Start Hang On in Terminal:
+4. Start Hang On in Terminal:
 
    ```bash
    .venv/bin/python -m hangon.server --port 8765
    ```
+5. Paste the the HTTPS address on a browser to start calling and receiving calls.
 
    Leave this process running while you use the call screens.
 

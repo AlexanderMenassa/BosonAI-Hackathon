@@ -1,12 +1,13 @@
 # Current architecture and change ownership
 
-The terminal entry point is `python -m hangon.sim`. The browser entry point is `python -m hangon.server`: it owns role-bound rooms and the WebRTC audio bridge. During screening, caller audio reaches a server-side Higgs session. After accepted handoff, audio travels between the two browser peers. The engine still owns routing and end decisions. SQLite persists test contacts and calls; notifications are simulated.
+The terminal entry point is `python -m hangon.sim`. The browser entry point remains `python -m hangon.server`, which forwards to `hangon/browser/server.py`. The browser package owns role-bound rooms and the WebRTC audio bridge. During screening, caller audio reaches a server-side Higgs session. After accepted handoff, audio travels between the two browser peers. The engine still owns routing and end decisions. SQLite persists test contacts and calls; notifications are simulated.
 
 | Concern | Canonical location | Checks to consider |
 | --- | --- | --- |
 | Call lifecycle and routing | `hangon/engine.py` | `tests/test_engine.py`, `tests/test_sim.py` |
-| Browser room and gateway | `hangon/gateway.py`, `hangon/server.py` | `tests/test_gateway.py`, `tests/test_server.py` |
-| WebRTC and Higgs audio | `hangon/media.py` | `tests/test_media.py`; separate live check |
+| Call gateway and state changes | `hangon/gateway.py` | `tests/test_gateway.py` |
+| Browser rooms, signaling, and static pages | `hangon/browser/server.py` | `tests/test_server.py` |
+| WebRTC and Higgs audio | `hangon/browser/media.py` | `tests/test_media.py`; separate live check |
 | High-stakes and injection checks | `hangon/rules.py` | `tests/test_engine.py` |
 | Shared types | `hangon/models.py` | All consumers and full suite |
 | Assessments and fallback | `hangon/classifier.py` | `tests/test_classifier.py` |
@@ -17,11 +18,15 @@ The terminal entry point is `python -m hangon.sim`. The browser entry point is `
 
 Keep model adapters separate from decision authority. Changes to persistence must preserve existing data or provide an explicit migration/reset procedure; never silently delete a user's database. There is no migration framework yet.
 
+`hangon/gateway.py` belongs in the core package because it coordinates call state across transports while relying on `engine.py` for policy. The browser-only server and media bridge live in `hangon/browser/`. Small `hangon/server.py` and `hangon/media.py` modules preserve the existing launch command and imports.
+
 ## Known gaps relative to the roadmap
 
 The WebRTC bridge and Higgs audio adapter have offline coverage, including a synthetic audio round trip and fake Higgs server. Live Higgs, browser microphone/playback, two physical devices, and TURN relay remain unverified. Dashboard events, quote-backed assessment contracts, asynchronous stale-result handling, and an independent idle timer are planned work. The browser currently uses the heuristic classifier on finalized caller transcripts; Phase 3 must replace this with the structured separate-classifier flow.
 
 The harness verifies the current offline baseline. It does not certify production scam detection, caller identity, live model reliability, or the full planned product.
+
+Unknown callers enter Higgs screening. The engine classifies each finalized caller turn, keeps confirmed scams in a bounded evidence-gathering conversation, and ends screening when evidence is complete or the turn/time cap is reached. The caller never reaches the receiver on a scam verdict.
 
 ## Planned call gateway
 

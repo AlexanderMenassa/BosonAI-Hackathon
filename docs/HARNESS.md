@@ -52,6 +52,7 @@ Browser verification becomes required for browser features once a browser app ex
 
 - `README.md`: product roadmap and target acceptance scenarios.
 - `docs/ARCHITECTURE.md`: current code ownership and known gaps.
+- `hangon/browser/`: browser rooms, signaling, and media adapters; `hangon/server.py` remains the launch entry point.
 - `docs/decisions/`: durable choices and tradeoffs; start with `TEMPLATE.md`.
 - `docs/handoffs/`: unfinished work, verification evidence, and next action.
 - `.github/ISSUE_TEMPLATE/task.md`: implementation-ready task outline.
