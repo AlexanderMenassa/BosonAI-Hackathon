@@ -48,16 +48,16 @@ class ScriptedAgent:
         self.p = persona
         n = persona.name
         self._screen = itertools.cycle([
-            "Sorry, who did you say you were with?",
+            "Sorry, who am I speaking with?",
             "And what is this regarding, exactly?",
-            "Could you tell me which company that is?",
+            "Could you tell me a little more about that?",
         ])
         self._stall = itertools.cycle([
-            f"Before I pass anything on to {n}, which department did you say you're with?",
-            "I see. And how exactly would the payment be made?",
+            f"Of course. Could you tell me a bit more about what you need from {n}?",
+            "How exactly would that work?",
             "Could I have a number to call you back on, so I can note it down?",
-            "Just so I understand, what happens if it isn't done today?",
-            "Could you give me your full name and a reference number for this?",
+            "And what happens next?",
+            "Could I have your full name, so I can pass it on?",
         ])
 
     async def start(self) -> None:

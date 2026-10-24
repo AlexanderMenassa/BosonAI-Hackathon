@@ -67,7 +67,7 @@ def test_role_and_guidance_ride_on_each_reply_and_the_session_holds_only_the_bas
     creates = events(received, "response.create")
     assert "Who's calling?" in creates[0]["response"]["instructions"]
     assert "Ask which organization" in creates[1]["response"]["instructions"]
-    assert "collect the details" in creates[2]["response"]["instructions"]
+    assert "taking down the details" in creates[2]["response"]["instructions"]
     assert "Ask which tax year" in creates[2]["response"]["instructions"]
 
 

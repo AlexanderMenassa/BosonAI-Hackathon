@@ -42,7 +42,7 @@ class Settings:
 
     # Hosted classifier (Google Gemini API)
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_model: str = "gemini-3.5-flash-lite"
     gemini_timeout: float = 30.0
 
     # Higgs Realtime
@@ -67,15 +67,15 @@ class Settings:
             guardian_phone=e.get("HANGON_GUARDIAN_PHONE", ""),
             max_turns=int(e.get("HANGON_MAX_TURNS", 10)),
             max_seconds=float(e.get("HANGON_MAX_SECONDS", 180)),
-            scam_enter=float(e.get("HANGON_SCAM_ENTER", 0.9)),
-            scam_exit=float(e.get("HANGON_SCAM_EXIT", 0.3)),
+            scam_enter=float(e.get("HANGON_SCAM_ENTER", 0.85)),
+            scam_exit=float(e.get("HANGON_SCAM_EXIT", 0.7)),
             scam_exit_turns=int(e.get("HANGON_SCAM_EXIT_TURNS", 2)),
             legit_enter=float(e.get("HANGON_LEGIT_ENTER", 0.3)),
             ollama_url=e.get("OLLAMA_URL", "http://localhost:11434"),
             ollama_model=e.get("OLLAMA_MODEL", "llama3.2:3b"),
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),
             gemini_api_key=e.get("GEMINI_API_KEY", ""),
-            gemini_model=e.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+            gemini_model=e.get("GEMINI_MODEL", "gemini-3.5-flash-lite"),
             gemini_timeout=float(e.get("GEMINI_TIMEOUT", 15)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
             higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),

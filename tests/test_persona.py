@@ -1,52 +1,20 @@
 from hangon.models import Evidence, Mode, Persona
-from hangon.persona import STALL_QUESTIONS, base_prompt, build_instructions, exact_line, mode_instructions, turn_guidance
+from hangon.persona import base_prompt, build_instructions, exact_line, known_facts, mode_instructions, turn_guidance
 
 P = Persona(name="Margaret")
 
 
-def test_base_prompt_forbids_accusing_and_repeating():
+def test_base_prompt_forbids_accusing_repeating_and_stock_openers():
     b = base_prompt(P)
     assert "never accuse the caller" in b and "scam" in b and "Never repeat" in b
+    assert "Never start a reply with 'I understand' or 'I see'" in b
 
 
 def test_the_assistant_handles_the_whole_call():
     for mode in (Mode.SCREEN, Mode.STALL):
         assert "You are Margaret's assistant" in mode_instructions(P, mode)
     assert "assistant" in exact_line(P, Mode.GREET) and "pass this on to Margaret" in exact_line(P, Mode.GOODBYE)
-
-
-def test_stalling_is_engaged_back_and_forth():
-    m = mode_instructions(P, Mode.STALL)
-    assert "respond directly to what they just said" in m.lower() and "one natural follow-up question" in m
-
-
-def test_stall_asks_for_the_first_missing_evidence():
-    assert "how they want the payment made" in turn_guidance(Mode.STALL, Evidence(claimed_org="CRA"), 3)
-    ev = Evidence(claimed_org="CRA", payment_method="gift cards")
-    assert "number to call them back" in turn_guidance(Mode.STALL, ev, 3)
-
-
-def test_one_question_per_turn():
-    assert turn_guidance(Mode.STALL, Evidence(), 3).count("Your question this turn:") == 1
-
-
-def test_with_evidence_complete_the_questions_keep_varying():
-    full = Evidence("CRA", "gift cards", "647-555-0199", "arrest")
-    a, b = turn_guidance(Mode.STALL, full, 3), turn_guidance(Mode.STALL, full, 4)
-    assert a != b and any(q in a for q in STALL_QUESTIONS)
-
-
-def test_screening_questions_rotate_and_skip_what_is_known():
-    asks = [turn_guidance(Mode.SCREEN, Evidence(), t).split(" You are")[0] for t in range(4)]
-    assert len(set(asks)) == 4
-    known = [turn_guidance(Mode.SCREEN, Evidence(claimed_org="CRA"), t) for t in range(3)]
-    assert not any("which organization" in k for k in known)
-
-
-def test_conversational_turns_never_greet_again_or_repeat():
-    for mode in (Mode.SCREEN, Mode.STALL):
-        g = turn_guidance(mode, Evidence(), 3)
-        assert "do not open with a greeting" in g and "do not repeat" in g
+    assert "never suspicious" in mode_instructions(P, Mode.STALL)
 
 
 def test_information_carrying_lines_are_exact():
@@ -57,3 +25,60 @@ def test_information_carrying_lines_are_exact():
 
 def test_guidance_is_appended_to_the_instructions():
     assert build_instructions(P, Mode.STALL, "EXTRA").endswith(" EXTRA")
+
+
+def test_fixed_lines_get_no_guidance():
+    for m in (Mode.GREET, Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE, Mode.GOODBYE):
+        assert turn_guidance(m, {}) == ""
+
+
+# ---------------------------------------------------------------- what is known, what is not
+def test_a_first_turn_lists_everything_as_unknown_and_lets_the_agent_choose():
+    g = turn_guidance(Mode.SCREEN, {})
+    for wanted in ("their name", "what the call is about", "which organization", "a number to call them back on"):
+        assert wanted in g
+    assert "already told you" not in g and "whichever fits most naturally" in g
+
+
+def test_what_the_caller_already_said_is_never_asked_again():
+    """Call #43: the agent asked for the name after Doug gave it, and the organization three times."""
+    known = {"name": "Doug Dimmadome", "organization": "Iamnotascammer.com", "number": "4165551047"}
+    g = turn_guidance(Mode.SCREEN, known)
+    assert "name: Doug Dimmadome" in g and "Never ask for any of this again" in g
+    unknown = g.split("Still unknown:")[1].split("Ask about ONE")[0]
+    assert "what the call is about" in unknown
+    for settled in ("their name", "which organization", "a number to call them back on"):
+        assert settled not in unknown
+
+
+def test_when_everything_basic_is_known_the_agent_asks_about_the_request_itself():
+    known = {"name": "Doug", "purpose": "a payment", "organization": "ACME", "number": "4165551047"}
+    g = turn_guidance(Mode.SCREEN, known)
+    assert "Still unknown" not in g and "about the request itself" in g
+
+
+def test_stalling_also_wants_to_know_how_the_money_moves_screening_does_not():
+    assert "how the money or payment" not in turn_guidance(Mode.SCREEN, {})
+    assert "how the money or payment" in turn_guidance(Mode.STALL, {"name": "Davis"})
+    assert "how the money or payment" not in turn_guidance(Mode.STALL, {"payment": "gift cards"})
+
+
+def test_guidance_asks_for_a_specific_reaction_and_bans_stock_openers_and_repeats():
+    for mode in (Mode.SCREEN, Mode.STALL):
+        g = turn_guidance(mode, {})
+        assert "react in a few words to something specific" in g
+        assert "Never start with 'I understand'" in g and "do not greet" in g and "do not repeat" in g
+
+
+def test_known_facts_come_from_the_judge_and_the_running_evidence():
+    class Judged:
+        caller_name, purpose = "Doug", "looking for a helpless old person"
+    ev = Evidence(claimed_org="Iamnotascammer.com", callback_number="4165551047", payment_method="gift cards")
+    assert known_facts(Judged(), ev) == {"name": "Doug", "purpose": "looking for a helpless old person",
+                                         "organization": "Iamnotascammer.com", "number": "4165551047",
+                                         "payment": "gift cards"}
+
+
+def test_known_facts_cope_with_a_result_that_has_no_judge_fields_or_no_result_yet():
+    assert known_facts(None, Evidence()) == {}
+    assert known_facts(object(), Evidence(claimed_org="CRA")) == {"organization": "CRA"}

@@ -55,14 +55,6 @@ class CallSession:
 
     # ------------------------------------------------------------------ properties
     @property
-    def is_personal(self) -> bool:
-        # Check recent caller text for family / personal indicators
-        caller_text_combined = " ".join(t.lower() for who, t in self.transcript if who == "caller")
-        personal_keywords = ["grandma", "grandpa", "grandson", "granddaughter", "mom", "dad", "son", "daughter",
-                             "it's me", "family", "nephew", "niece"]
-        return any(kw in caller_text_combined for kw in personal_keywords)
-
-    @property
     def elapsed(self) -> float:
         return self._clock() - self.started
 

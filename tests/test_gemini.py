@@ -41,21 +41,25 @@ def answer(d: dict) -> dict:
 
 
 def test_request_shape_and_verdict(gemini):
-    Stub.reply = answer({"label": "scam", "scam_score": 0.97, "reason": "coupons as payment", "claimed_org": "Amazon",
-                         "payment_method": "coupons", "callback_number": None, "urgency_tactic": "pay now",
-                         "high_stakes": True, "caller_summary": "Claimed to be Amazon"})
+    Stub.reply = answer({"behaviours": [{"type": "unusual_payment", "quote": "pay now with coupons"},
+                                        {"type": "impersonates_authority", "quote": "This is Amazon"}],
+                         "ordinary_purpose_quote": None, "caller_name": None, "purpose": "an unpaid shipment",
+                         "claimed_org": "Amazon", "payment_method": "coupons", "callback_number": None,
+                         "urgency_tactic": "pay now", "high_stakes": True, "caller_summary": "Claimed to be Amazon"})
     r = gemini.classify([("caller", "This is Amazon. You must pay now with coupons.")])
-    assert r.label is Label.SCAM and r.source == "gemini:gemini-test"
+    assert r.label is Label.SCAM and r.source == "gemini:gemini-test" and r.purpose == "an unpaid shipment"
+    assert [t for t, _ in r.behaviours] == ["unusual_payment", "impersonates_authority"]
+    assert "unusual payment" in r.reason and "pay now with coupons" in r.reason
     assert r.evidence.claimed_org == "Amazon" and r.evidence.payment_method == "coupons"
     path, key, body = Stub.seen[0]
     assert path == "/v1beta/models/gemini-test:generateContent" and key == "test-key"
     assert body["generationConfig"]["responseMimeType"] == "application/json"
-    assert "screen phone calls" in body["systemInstruction"]["parts"][0]["text"]
+    assert "report what the CALLER has said" in body["systemInstruction"]["parts"][0]["text"]
     assert "<transcript>" in body["contents"][0]["parts"][0]["text"]
 
 
 def test_invented_evidence_is_dropped_like_for_any_llm(gemini):
-    Stub.reply = answer({"label": "scam", "scam_score": 0.9, "reason": "r", "claimed_org": "Amazon",
+    Stub.reply = answer({"behaviours": [], "ordinary_purpose_quote": None, "claimed_org": "Amazon",
                          "payment_method": "gift cards", "callback_number": "647-555-0199",
                          "urgency_tactic": None, "high_stakes": True, "caller_summary": "s"})
     r = gemini.classify([("caller", "Hi, this is Amazon calling.")])
@@ -77,3 +81,22 @@ def test_blocked_prompt_falls_back(gemini):
 def test_missing_key_is_a_clear_error():
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
         GeminiClassifier("")
+
+
+def test_a_quote_the_caller_never_said_is_dropped_so_no_scam_is_invented(gemini, caplog):
+    """The spill problem: a small model mixed a prompt example into its report. Quotes are checked against the caller."""
+    Stub.reply = answer({"behaviours": [{"type": "threat", "quote": "you will be arrested today"},
+                                        {"type": "unusual_payment", "quote": "pay with gift cards"}],
+                         "ordinary_purpose_quote": None, "claimed_org": "Canada Revenue Agency",
+                         "payment_method": None, "callback_number": None, "urgency_tactic": None,
+                         "high_stakes": True, "caller_summary": "s"})
+    r = gemini.classify([("caller", "Hello, this is Officer Davis from the Canada Revenue Agency.")])
+    assert r.behaviours == [] and r.label is Label.UNSURE and r.scam_score == 0.50
+    assert "judge dropped threat" in caplog.text and "you will be arrested today" in caplog.text   # visible while tuning
+
+
+def test_the_screener_is_labelled_assistant_so_its_words_are_not_taken_for_the_callers(gemini):
+    Stub.reply = answer({"behaviours": []})
+    gemini.classify([("agent", "Hello? Who's calling?"), ("caller", "Hi there.")])
+    sent = Stub.seen[0][2]["contents"][0]["parts"][0]["text"]
+    assert "assistant: Hello? Who's calling?" in sent and "caller: Hi there." in sent and "agent:" not in sent

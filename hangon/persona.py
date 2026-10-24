@@ -2,50 +2,34 @@
 
 Two layers:
 * mode_instructions(): the role for this moment (screening, stalling, fixed information lines).
-* turn_guidance(): a short, fresh directive for THIS turn: the one question to ask next.
+* turn_guidance(): a short, fresh directive for THIS turn, built from what the judge has learned so far.
 
-Stalling is a natural back-and-forth: the assistant listens, responds to what the caller just said, and asks one
-real follow-up question, like a careful gatekeeper collecting details before passing anything on. Each answer
-invites another question, and the questions steer toward the evidence that is still missing.
+The questions are not a fixed list. Each turn the agent is told what the caller has already said (name, reason for
+calling, organization, number) so it never asks for it again, and what is still unknown, and it chooses the one that
+fits best after what the caller just said. It reacts to something specific first, like a calm receptionist would.
 
 Boson's own tutorial found that long behavioural prompts made the model ignore tools, so each layer is kept
 short. The engine picks the mode; the agent only speaks.
 """
 from __future__ import annotations
 
-from .models import EVIDENCE_FIELDS, Evidence, Mode, Persona
+from .models import Evidence, Mode, Persona
 
 GREETING = "Hello? This is {name}'s assistant, calls may be transcribed. Who's calling?"
 
-# What to ask for, in this order, while the evidence checklist is incomplete.
-_STALL_ASKS_ORG = {
-    "claimed_org": "Ask exactly which organization, company, or department they are with.",
-    "payment_method": "Ask exactly how they want the payment made.",
-    "callback_number": "Ask for a number to call them back on so you can write it down.",
-    "urgency_tactic": "Ask what happens if it isn't done today.",
+# What a careful receptionist wants to know, in the order they would naturally ask. The first four are asked while
+# screening; the last two only once the caller is being stalled (asking about payment too early would be odd).
+_ASK_FOR = {
+    "name": "who they are (their name)",
+    "purpose": "what the call is about",
+    "organization": "which organization they are calling from, if any",
+    "number": "a number to call them back on",
+    "payment": "exactly how the money or payment is supposed to be handled",
+    "urgency": "what happens if it is not done today",
 }
-
-_STALL_ASKS_PERSONAL = {
-    "claimed_org": "Ask for their full name and how they know Margaret.",
-    "payment_method": "Ask exactly how they expect the money or payment to be sent.",
-    "callback_number": "Ask for a phone number where they can be reached right now.",
-    "urgency_tactic": "Ask why this needs to be done immediately.",
-}
-
-_SCREEN_ASKS = {  # used only while that evidence is missing
-    "claimed_org": "Ask which organization they are calling from.",
-    "callback_number": "Ask for a number where they can be reached.",
-}
-_SCREEN_ALWAYS = ("Ask what the call is about.", "Ask for their name.")
-
-# Once the evidence is in, keep the conversation going with a different kind of question each turn.
-STALL_QUESTIONS = (
-    "Ask for a specific detail about their claim, such as which account, which year, or what it is for.",
-    "Ask how the process works, step by step.",
-    "Ask for their full name and a reference or ID number.",
-    "Repeat back in your own words what you understood so far, and ask if that is right.",
-    "Ask why it has to be done this way.",
-)
+_TOLD = {"name": "name", "purpose": "reason for calling", "organization": "organization", "number": "callback number",
+         "payment": "payment method", "urgency": "deadline or pressure"}
+_SCREENING_FACTS = ("name", "purpose", "organization", "number")
 
 
 def greeting(p: Persona) -> str:
@@ -71,7 +55,8 @@ def base_prompt(p: Persona) -> str:
         "short sentences, no lists, no markdown, no emoji. Never share personal details, addresses, or "
         "account information, and never agree to send money, buy gift cards, or read out codes. "
         "Stay polite and in character: never accuse the caller, never say or hint that the call might be "
-        "a scam, and never state facts about any organization. Never repeat a sentence you already said."
+        "a scam, and never state facts about any organization. Never repeat a sentence you already said. "
+        "Never start a reply with \'I understand\' or \'I see\'."
     )
 
 
@@ -85,31 +70,44 @@ def mode_instructions(p: Persona, mode: Mode) -> str:
                 "question. Never ask for something they have already told you. Do not agree to anything, and do not "
                 "comment on whether the call is genuine.")
     if mode is Mode.STALL:
-        return (f"You are {n}'s assistant. Before anything can be passed on to {n}, you calmly collect the details. "
-                "Respond directly to what they just said, then ask exactly one natural follow-up question. Be polite, "
-                "professional and engaged. Never give real information, never agree to pay, and never end the call "
+        return (f"You are {n}'s assistant, taking down the details so {n} can follow up. Respond directly to what "
+                "they just said, then ask exactly one natural follow-up question. Stay warm and cooperative, never "
+                "suspicious or accusing. Never give real information, never agree to pay, and never end the call "
                 "yourself.")
     raise ValueError(mode)
 
 
-def turn_guidance(mode: Mode, evidence: Evidence, turn: int, is_personal: bool = False) -> str:
-    """A short directive for this one turn. Changes every turn, which also stops the model repeating itself."""
+def known_facts(result, evidence: Evidence) -> dict[str, str]:
+    """What the caller has told us so far, from the judge's latest result and the running evidence."""
+    facts = {"name": getattr(result, "caller_name", None), "purpose": getattr(result, "purpose", None),
+             "organization": evidence.claimed_org, "number": evidence.callback_number,
+             "payment": evidence.payment_method, "urgency": evidence.urgency_tactic}
+    return {k: v for k, v in facts.items() if v}
+
+
+def turn_guidance(mode: Mode, known: dict[str, str]) -> str:
+    """A short directive for this one turn: what is already known, what is not, and how to sound."""
+    if mode not in (Mode.SCREEN, Mode.STALL):
+        return ""
     parts: list[str] = []
-    missing = [f for f in EVIDENCE_FIELDS if not getattr(evidence, f)]
-
-    if mode is Mode.STALL:
-        use_personal = is_personal or evidence.claimed_org == "Personal" or not evidence.claimed_org
-        asks_map = _STALL_ASKS_PERSONAL if use_personal else _STALL_ASKS_ORG
-        ask = asks_map[missing[0]] if missing else STALL_QUESTIONS[turn % len(STALL_QUESTIONS)]
-        parts.append("Your question this turn: " + ask)
-    elif mode is Mode.SCREEN:
-        asks = [_SCREEN_ASKS[f] for f in missing if f in _SCREEN_ASKS] + list(_SCREEN_ALWAYS)
-        parts.append("Your question this turn: " + asks[turn % len(asks)])  # varied questions for evasive callers
-
-    if mode in (Mode.SCREEN, Mode.STALL):
-        parts.append("You are mid-conversation: do not open with a greeting and do not introduce yourself again.")
-        # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
-        parts.append("Say something new: do not repeat or rephrase anything you have already said.")
+    told = "; ".join(f"{_TOLD[k]}: {v}" for k, v in known.items())
+    if told:
+        parts.append(f"What the caller has already told you: {told}. Never ask for any of this again.")
+    wanted = _SCREENING_FACTS if mode is Mode.SCREEN else tuple(_ASK_FOR)
+    unknown = [_ASK_FOR[k] for k in wanted if k not in known]
+    if unknown:
+        parts.append("Still unknown: " + "; ".join(unknown) + ". Ask about ONE of these, whichever fits most "
+                     "naturally after what they just said.")
+    else:
+        parts.append("You already know the basics, so ask one natural question about the request itself: how exactly "
+                     "it would work, who would be involved, by when, or what happens next. Pick whichever fits what "
+                     "they just said.")
+    parts.append("Sound like a calm, friendly receptionist: first react in a few words to something specific they "
+                 "just said, then ask your one question. Never start with 'I understand' or 'I see', and vary how "
+                 "you begin.")
+    # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
+    parts.append("You are mid-conversation: do not greet or introduce yourself again, and do not repeat or "
+                 "rephrase anything you have already said.")
     return " ".join(parts)
 
 

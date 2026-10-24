@@ -10,19 +10,19 @@ from hangon.models import Label
 
 
 def test_parse_json_with_chatter_around_it():
-    assert parse_llm_json('Sure! {"label": "scam", "scam_score": 0.9} hope that helps')["label"] == "scam"
+    assert parse_llm_json('Sure! {"behaviours": [], "purpose": "x"} hope that helps')["purpose"] == "x"
 
 
 def test_nullish_strings_become_none():
-    r = result_from_dict({"label": "unsure", "scam_score": 0.5, "claimed_org": "null",
-                          "payment_method": "None", "callback_number": "", "urgency_tactic": "N/A"}, "t")
-    assert r.evidence.count == 0
+    r = result_from_dict({"claimed_org": "null", "payment_method": "None", "callback_number": "",
+                          "urgency_tactic": "N/A", "caller_name": "unknown", "purpose": "none"}, "t", "hello")
+    assert r.evidence.count == 0 and r.caller_name is None and r.purpose is None
 
 
-def test_score_is_clamped_and_bad_label_raises():
-    assert result_from_dict({"label": "scam", "scam_score": 7}, "t").scam_score == 1.0
-    with pytest.raises(ValueError):
-        result_from_dict({"label": "maybe"}, "t")
+def test_the_model_cannot_set_the_score_only_report_behaviours():
+    """An LLM claiming scam_score 0.99 or label 'scam' has no effect: the verdict comes from grounded behaviours."""
+    r = result_from_dict({"label": "scam", "scam_score": 0.99}, "t", "Hello, who is this?")
+    assert r.label is Label.UNSURE and r.scam_score == 0.50
 
 
 def test_transcript_cannot_close_its_own_wrapper_tag():
@@ -67,16 +67,18 @@ def ollama_stub():
 
 def test_ollama_classifier_parses_a_model_reply(ollama_stub):
     srv, url = ollama_stub
-    _Handler.reply = {"label": "scam", "scam_score": 0.97, "reason": "gift cards", "claimed_org": "CRA",
-                      "payment_method": "gift cards", "callback_number": None, "urgency_tactic": "arrest",
-                      "high_stakes": True, "caller_summary": "Fake CRA call"}
+    _Handler.reply = {"behaviours": [{"type": "unusual_payment", "quote": "Pay with gift cards"}],
+                      "ordinary_purpose_quote": None, "claimed_org": "CRA", "payment_method": "gift cards",
+                      "callback_number": None, "urgency_tactic": None, "high_stakes": True,
+                      "caller_summary": "Fake CRA call"}
     r = OllamaClassifier(url, "stub").classify([("caller", "This is the CRA. Pay with gift cards.")])
     assert r.label is Label.SCAM and r.high_stakes and r.evidence.claimed_org == "CRA" and r.source == "ollama:stub"
+    assert r.behaviours == [("unusual_payment", "Pay with gift cards")]
 
 
 def test_ollama_garbage_reply_falls_back_to_heuristic(ollama_stub):
     srv, url = ollama_stub
-    _Handler.reply = {"label": "banana"}
+    _Handler.reply = "I am sorry, I cannot help with that."   # not a JSON object
     r = OllamaClassifier(url, "stub").classify([("caller", "Hi, Riverside Pharmacy, prescription pickup")])
     assert "fallback" in r.source and r.label is Label.LEGIT
 
@@ -118,7 +120,7 @@ def test_evidence_the_caller_did_say_is_kept_even_as_spoken_digits_or_initials()
 
 def test_llm_evidence_is_grounded_and_gaps_filled_from_the_caller_words(ollama_stub):
     srv, url = ollama_stub
-    _Handler.reply = {"label": "scam", "scam_score": 0.9, "reason": "r", "claimed_org": "CRA",
+    _Handler.reply = {"behaviours": [], "ordinary_purpose_quote": None, "claimed_org": "CRA",
                       "payment_method": "gift cards", "callback_number": "647-555-0199", "urgency_tactic": None,
                       "high_stakes": True, "caller_summary": "s"}
     r = OllamaClassifier(url, "stub").classify([("caller", "This is the CRA. You must pay immediately.")])

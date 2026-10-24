@@ -22,7 +22,7 @@ from .classifier import Classifier, GeminiClassifier, HeuristicClassifier, Ollam
 from .config import Settings
 from .engine import CallSession
 from .models import Action, Mode, Persona
-from .persona import turn_guidance
+from .persona import known_facts, turn_guidance
 from .notify import ConsoleNotifier, Notifier
 from .reports import notify_after_call
 from .store import Store
@@ -99,7 +99,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 say(f"caller> {text}")
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
-            guidance = turn_guidance(d.mode, session.evidence, session.turns, is_personal=session.is_personal)
+            guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence))
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")

@@ -36,7 +36,7 @@ from .config import Settings
 from .engine import CallSession
 from .models import Action, Mode, Persona
 from .notify import ConsoleNotifier, Notifier
-from .persona import base_prompt, build_instructions, turn_guidance
+from .persona import base_prompt, build_instructions, known_facts, turn_guidance
 from .reports import notify_after_call
 from .sim import CLASSIFIERS
 from .store import Store
@@ -262,7 +262,7 @@ class VoiceCall:
             d = await asyncio.to_thread(self.session.on_caller_turn, text)
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
-            guidance = turn_guidance(d.mode, self.session.evidence, self.session.turns, is_personal=self.session.is_personal)
+            guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence))
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")
