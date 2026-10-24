@@ -138,10 +138,10 @@ Run on a phone and a laptop. All phone numbers are simulated; audio is browser a
 
 | | | | |
 | --- | --- | --- | --- |
-| <img src="docs/screenshots/02-receiver-call-lists.png" width="170"> | <img src="docs/screenshots/03-unknown-caller-screened.png" width="170"> | <img src="docs/screenshots/04-trusted-caller-rings-receiver.png" width="170"> | <img src="docs/screenshots/05-call-ended.png" width="170"> |
+| <img src="screenshots/02-receiver-call-lists.png" width="170"> | <img src="screenshots/03-unknown-caller-screened.png" width="170"> | <img src="screenshots/04-trusted-caller-rings-receiver.png" width="170"> | <img src="screenshots/05-call-ended.png" width="170"> |
 | Receiver's trust and block lists | Unlisted number is screened | Trusted number rings the receiver | Call ended |
 
-<img src="docs/screenshots/01-caller-room-setup.png" width="640" alt="Caller view: creating a private room">
+<img src="screenshots/01-caller-room-setup.png" width="640" alt="Caller view: creating a private room">
 
 - **Call lists:** only the receiver edits them; changes apply to the next call and blocked numbers take priority.
 - **Unlisted number:** `+1 (416) 999-6669` is on neither list (one digit off the blocked `+1 (416) 999-6666`), so Hang On screens it instead of ringing the receiver.
