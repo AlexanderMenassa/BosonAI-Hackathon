@@ -44,7 +44,6 @@ class Settings:
     boson_api_key: str = ""
     higgs_model: str = "higgs-realtime"  # run `python -m hangon.list_models` to see what your key can use
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
-    higgs_steering: str = "response"  # response | session  (run `python -m hangon.probe`)
 
     # Voice: how sure Higgs's speech detector must be (0..1; server default 0.55) and the shortest caller
     # utterance (in words) that counts as a turn. Stops coughs and "mm-hm" from interrupting Margaret.
@@ -73,7 +72,6 @@ class Settings:
             higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),
             boson_url=e.get("BOSON_REALTIME_URL",
                             f"wss://api.boson.ai/v1/realtime?model={e.get('HIGGS_MODEL', 'higgs-realtime')}"),
-            higgs_steering=e.get("HIGGS_STEERING", "response"),
             vad_threshold=float(e.get("HANGON_VAD_THRESHOLD", 0.8)),
             min_turn_words=int(e.get("HANGON_MIN_TURN_WORDS", 2)),
         )

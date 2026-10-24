@@ -1,10 +1,12 @@
-"""Which way of changing instructions mid-conversation does Higgs actually follow?
+"""Does Higgs follow instruction changes mid-conversation? Run this when switching HIGGS_MODEL.
 
-    python -m hangon.probe            # all three methods
+    python -m hangon.probe            # both methods
     python -m hangon.probe --debug    # also print every event
 
-For each method: tell Higgs to answer with one word (APPLE), then switch it to BANANA, then to CHERRY,
-using that method. A method passes only if Higgs follows BOTH switches. Costs a few seconds of text.
+Tells Higgs to answer with one word (APPLE), then switches it to BANANA, then CHERRY, two ways:
+* response: per-reply instructions on response.create. The agent depends on this one: it must PASS.
+* session:  session.update before the reply. Shown for comparison (it lands late on the models tried so far).
+A method passes only if Higgs follows BOTH switches. Costs a few seconds of text.
 """
 from __future__ import annotations
 
@@ -82,15 +84,9 @@ async def try_method(method: str, s: Settings, debug: bool) -> tuple[bool, list[
                     await r.configure(rule(word))
                     await r.user(f"Message number {i}, please answer.")
                     replies.append(await r.reply())
-                elif method == "response":
+                else:  # response
                     await r.user(f"Message number {i}, please answer.")
                     replies.append(await r.reply({"instructions": rule(word)}))
-                elif method == "system":
-                    await r.user(f"Message number {i}, please answer.")
-                    await r.send({"type": "conversation.item.create", "item": {
-                        "type": "message", "role": "system",
-                        "content": [{"type": "input_text", "text": "New instructions, replacing earlier ones: " + rule(word)}]}})
-                    replies.append(await r.reply())
     except Exception as e:
         return False, replies, f"{type(e).__name__}: {e}"
     ok = len(replies) == 3 and all(w in rep.upper() for w, rep in zip(WORDS, replies))
@@ -105,8 +101,7 @@ def main() -> None:
             pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--debug", action="store_true")
-    ap.add_argument("--method", choices=["session", "response", "system"], action="append",
-                    help="system is rejected by Higgs; kept to show it")
+    ap.add_argument("--method", choices=["response", "session"], action="append")
     args = ap.parse_args()
     s = Settings.from_env()
     if not s.boson_api_key:
@@ -114,7 +109,7 @@ def main() -> None:
     print(f"model: {s.higgs_model}")
 
     results = {}
-    for method in args.method or ["session", "response", "system"]:
+    for method in args.method or ["response", "session"]:
         print(f"\n--- {method} ---")
         ok, replies, err = asyncio.run(try_method(method, s, args.debug))
         for want, got in zip(WORDS, replies):
@@ -124,12 +119,10 @@ def main() -> None:
         print(f"  => {'PASS' if ok else 'FAIL'}")
         results[method] = ok
 
-    passing = [m for m, ok in results.items() if ok]
     print("\n=== summary:", ", ".join(f"{m}={'PASS' if ok else 'FAIL'}" for m, ok in results.items()))
-    if passing:
-        print(f"Put this in .env:  HIGGS_STEERING={passing[0]}")
-    else:
-        print("No method passed. Paste this output so we can look at the replies.")
+    if "response" in results:
+        print("The agent uses per-reply instructions: " +
+              ("OK for this model." if results["response"] else "this model does NOT follow them. Don't use it."))
 
 
 if __name__ == "__main__":

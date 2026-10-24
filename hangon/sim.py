@@ -41,8 +41,7 @@ def make_agent(kind: str, persona: Persona, s: Settings, debug: bool = False) ->
     if kind == "scripted":
         return ScriptedAgent(persona)
     if kind == "higgs":
-        return HiggsTextAgent(persona, s.boson_api_key, s.boson_url, model=s.higgs_model,
-                              steering=s.higgs_steering, debug=debug)
+        return HiggsTextAgent(persona, s.boson_api_key, s.boson_url, model=s.higgs_model, debug=debug)
     raise SystemExit(f"unknown agent {kind!r}")
 
 
@@ -79,14 +78,12 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
         return session
 
     persona = persona or Persona()
-    prev_mode: Mode | None = None
-    last_line = ""
     try:
         await agent.start()
         line = await agent.say(Mode.GREET)
         session.record_agent(line)
         say(f"agent> {line}")
-        prev_mode, last_line = Mode.GREET, line
+        prev_mode = Mode.GREET
         while True:
             text = await next_line()
             if text is None:
@@ -97,11 +94,11 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 say(f"caller> {text}")
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
-            guidance = turn_guidance(persona, d.mode, session.evidence, session.turns, prev_mode, last_line)
+            guidance = turn_guidance(persona, d.mode, session.evidence, session.turns, prev_mode)
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")
-            prev_mode, last_line = d.mode, line
+            prev_mode = d.mode
             if d.action in (Action.END, Action.FORWARD):
                 say(f"[{d.action.value}] {d.note}")
                 session.finish()
@@ -131,8 +128,6 @@ def main() -> None:
     ap.add_argument("--classifier", choices=["heuristic", "ollama"], default="heuristic")
     ap.add_argument("--agent", choices=["scripted", "higgs"], default="scripted")
     ap.add_argument("--persona-name", default="Margaret")
-    ap.add_argument("--steering", choices=["response", "session"],
-                    help="override HIGGS_STEERING for this run")
     ap.add_argument("--debug", action="store_true", help="print what is sent to and received from Higgs")
     ap.add_argument("--db", help="sqlite path (default from HANGON_DB)")
     ap.add_argument("--list-blocked", action="store_true")
@@ -158,8 +153,6 @@ def main() -> None:
         print(f"trusted: {args.trust}")
         return
 
-    if args.steering:
-        settings.higgs_steering = args.steering
     persona = Persona(name=args.persona_name)
     classifier = make_classifier(args.classifier, settings)
     try:

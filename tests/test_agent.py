@@ -34,14 +34,13 @@ async def fake_higgs(received, ws, replies=None):
             await ws.send(json.dumps({"type": "response.done", "response": {"status": "completed"}}))
 
 
-def converse(steering, turns, server_replies=None):
+def converse(turns, server_replies=None):
     """turns: list of (mode, caller_text, guidance). Returns (received events, replies)."""
     async def go():
         received, replies = [], []
         async with serve(lambda ws: fake_higgs(received, ws, server_replies), "127.0.0.1", 0) as srv:
             port = srv.sockets[0].getsockname()[1]
-            agent = HiggsTextAgent(Persona(name="Margaret"), "sk-test", url=f"ws://127.0.0.1:{port}",
-                                   steering=steering)
+            agent = HiggsTextAgent(Persona(name="Margaret"), "sk-test", url=f"ws://127.0.0.1:{port}")
             await agent.start()
             for mode, text, guidance in turns:
                 replies.append(await agent.say(mode, text, guidance))
@@ -59,29 +58,17 @@ def events(received, kind):
     return [e for t, e in received if t == kind]
 
 
-def test_session_steering_sends_fresh_instructions_every_turn():
-    received, replies = converse("session", CALL)
+def test_role_and_guidance_ride_on_each_reply_and_the_session_holds_only_the_base_prompt():
+    received, replies = converse(CALL)
     assert received[0] == ("auth", "Bearer sk-test") and replies == DISTINCT[:3]
     updates = events(received, "session.update")
-    assert len(updates) == 3 and all(u["session"]["output_modalities"] == ["text"] for u in updates)
-    assert "Who's calling?" in updates[0]["session"]["instructions"]
-    assert "Ask which organization" in updates[1]["session"]["instructions"]
-    assert "You are now Margaret" in updates[2]["session"]["instructions"]
-    assert "Mishear one word" in updates[2]["session"]["instructions"]
-
-
-def test_session_steering_skips_identical_updates():
-    received, _ = converse("session", [(Mode.STALL, "a", "same"), (Mode.STALL, "b", "same")])
-    assert len(events(received, "session.update")) == 1
-
-
-def test_response_steering_puts_the_role_on_each_reply():
-    received, _ = converse("response", CALL)
-    updates = events(received, "session.update")
-    assert len(updates) == 1 and "Say exactly" not in updates[0]["session"]["instructions"]  # base prompt only
+    assert len(updates) == 1 and updates[0]["session"]["output_modalities"] == ["text"]
+    assert "Say exactly" not in updates[0]["session"]["instructions"]
     creates = events(received, "response.create")
     assert "Who's calling?" in creates[0]["response"]["instructions"]
+    assert "Ask which organization" in creates[1]["response"]["instructions"]
     assert "You are now Margaret" in creates[2]["response"]["instructions"]
+    assert "Mishear one word" in creates[2]["response"]["instructions"]
 
 
 def test_server_error_event_raises_agent_error():
@@ -129,12 +116,9 @@ def test_unreachable_server_is_an_agent_error_not_a_traceback():
         asyncio.run(go())
 
 
-def test_default_steering_is_response():
-    assert HiggsTextAgent(Persona(), "k").steering == "response"
-
 
 def test_repeated_reply_is_retried_and_the_fresh_one_is_used():
-    received, replies = converse("response", CALL, server_replies=[
+    received, replies = converse(CALL, server_replies=[
         "Hello? This is Margaret's assistant.", "Which company is this?", "Which company is this?",
         "Oh dear, let me find my glasses first."])
     assert replies == ["Hello? This is Margaret's assistant.", "Which company is this?",
@@ -148,7 +132,7 @@ def test_repeated_reply_is_retried_and_the_fresh_one_is_used():
 def test_a_reply_that_keeps_repeating_falls_back_to_a_scripted_line():
     same = "Could you please hold on while I find a pen?"
     turns = [(Mode.STALL, "a", "g1"), (Mode.STALL, "b", "g2"), (Mode.GOODBYE, "c", "g3")]
-    _, replies = converse("response", turns, server_replies=[same])
+    _, replies = converse(turns, server_replies=[same])
     assert replies[0] == same
     assert replies[1] != same and replies[2] != same           # scripted fallbacks, not loops
     assert "door" in replies[2] or "Goodbye" in replies[2]      # the goodbye still happens
@@ -186,5 +170,3 @@ def test_text_from_the_done_event_is_used_when_no_deltas_arrive():
 def test_bad_config_is_a_clear_error():
     with pytest.raises(AgentError, match="BOSON_API_KEY"):
         HiggsTextAgent(Persona(), "")
-    with pytest.raises(AgentError, match="steering"):
-        HiggsTextAgent(Persona(), "k", steering="telepathy")

@@ -33,9 +33,8 @@ class CallSession:
         self.store = store
         self.cfg = settings or Settings()
         self._clock = clock
-        self.started = clock()
-        self.started_wall = wall()
         self._wall = wall
+        self.started = clock()
 
         self.transcript: list[tuple[str, str]] = []
         self.verdict: Label = Label.UNSURE
@@ -50,7 +49,7 @@ class CallSession:
         self.call_id: int | None = None
         self._low_streak = 0
         self.duration: float = 0.0
-        self.started_at: float = self.started_wall
+        self.started_at: float = wall()
 
     # ------------------------------------------------------------------ properties
     @property
@@ -106,30 +105,28 @@ class CallSession:
 
         if self.verdict is Label.SCAM:
             if self.evidence.complete:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, result, "evidence checklist complete")
+                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "evidence checklist complete")
             if self.capped:
-                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, result, "time/turn cap reached")
-            return Decision(Action.CONTINUE, Mode.STALL, self.verdict, result, note="scam: stalling")
+                return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "time/turn cap reached")
+            return Decision(Action.CONTINUE, Mode.STALL, note="scam: stalling")
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:
-                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK, result,
-                                 "legit but high-stakes: not forwarded", action=Action.END)
+                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK, "legit but high-stakes: not forwarded")
             self.outcome = Outcome.FORWARDED
-            return Decision(Action.FORWARD, Mode.HANDOFF, self.verdict, result,
-                            outcome=Outcome.FORWARDED, note="legit: forwarding")
+            return Decision(Action.FORWARD, Mode.HANDOFF, Outcome.FORWARDED, note="legit: forwarding")
 
         # UNSURE
         if self.capped:
-            return self._end(Mode.TAKE_MESSAGE, Outcome.MESSAGE_TAKEN, result, "cap reached while unsure")
-        return Decision(Action.CONTINUE, Mode.SCREEN, self.verdict, result, note="unsure: asking more")
+            return self._end(Mode.TAKE_MESSAGE, Outcome.MESSAGE_TAKEN, "cap reached while unsure")
+        return Decision(Action.CONTINUE, Mode.SCREEN, note="unsure: asking more")
 
     def on_hangup(self) -> Decision:
         """The caller hung up before the system ended the call."""
         if not self.ended and self.outcome is None:
             self.outcome = Outcome.SCAM_HANGUP if self.verdict is Label.SCAM else Outcome.HANGUP_UNSURE
         self.finish()
-        return Decision(Action.END, verdict=self.verdict, outcome=self.outcome, note="caller hung up")
+        return Decision(Action.END, outcome=self.outcome, note="caller hung up")
 
     def finish(self) -> Outcome:
         """Persist the call. Idempotent. Blocklists the number only on a scam verdict."""
@@ -149,10 +146,9 @@ class CallSession:
         return self.outcome
 
     # ------------------------------------------------------------------ internals
-    def _end(self, mode: Mode, outcome: Outcome, result: ClassifierResult, note: str,
-             action: Action = Action.END) -> Decision:
+    def _end(self, mode: Mode, outcome: Outcome, note: str) -> Decision:
         self.outcome = outcome
-        return Decision(action, mode, self.verdict, result, outcome=outcome, note=note)
+        return Decision(Action.END, mode, outcome, note=note)
 
     def _update_verdict(self, r: ClassifierResult) -> None:
         """Turn a raw classifier result into a stable verdict.

@@ -103,12 +103,12 @@ class SoundDeviceIO:
             return int(self.sd.query_devices(device, kind)["default_samplerate"])
 
     def start(self, on_mic_chunk: Callable[[bytes], None]) -> None:
-        def mic_cb(indata, frames, time_info, status):
+        def mic_cb(indata, _frames, _time_info, _status):  # signature required by sounddevice
             if self.mute_mic_while_playing and self.is_playing():
                 return
             on_mic_chunk(resample(bytes(indata), self.in_rate, RATE))
 
-        def spk_cb(outdata, frames, time_info, status):
+        def spk_cb(outdata, _frames, _time_info, _status):
             outdata[:] = self.buffer.pull(len(outdata))
 
         self._in = self.sd.RawInputStream(samplerate=self.in_rate, channels=1, dtype="int16",

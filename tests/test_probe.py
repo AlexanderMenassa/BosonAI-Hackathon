@@ -15,7 +15,7 @@ def word_in(text):
 
 
 async def session_only_server(ws):
-    """Follows session.update; ignores per-response instructions and system messages (like a stubborn model)."""
+    """Follows session.update; ignores per-reply instructions (like a stubborn model)."""
     current = None
     async for raw in ws:
         evt = json.loads(raw)
@@ -40,7 +40,6 @@ def test_probe_passes_the_method_the_server_follows():
     assert ok and replies == ["APPLE", "BANANA", "CHERRY"] and not err
 
 
-def test_probe_fails_methods_the_server_ignores():
-    for method in ("response", "system"):
-        ok, replies, _ = run(method)
-        assert not ok and replies == ["APPLE", "APPLE", "APPLE"]
+def test_probe_fails_a_method_the_server_ignores():
+    ok, replies, _ = run("response")
+    assert not ok and replies == ["APPLE", "APPLE", "APPLE"]

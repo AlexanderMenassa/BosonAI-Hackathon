@@ -15,14 +15,14 @@ def test_parse_json_with_chatter_around_it():
 
 def test_nullish_strings_become_none():
     r = result_from_dict({"label": "unsure", "scam_score": 0.5, "claimed_org": "null",
-                          "payment_method": "None", "callback_number": "", "urgency_tactic": "N/A"}, "t", [])
+                          "payment_method": "None", "callback_number": "", "urgency_tactic": "N/A"}, "t")
     assert r.evidence.count == 0
 
 
 def test_score_is_clamped_and_bad_label_raises():
-    assert result_from_dict({"label": "scam", "scam_score": 7}, "t", []).scam_score == 1.0
+    assert result_from_dict({"label": "scam", "scam_score": 7}, "t").scam_score == 1.0
     with pytest.raises(ValueError):
-        result_from_dict({"label": "maybe"}, "t", [])
+        result_from_dict({"label": "maybe"}, "t")
 
 
 def test_transcript_cannot_close_its_own_wrapper_tag():
@@ -84,3 +84,15 @@ def test_ollama_garbage_reply_falls_back_to_heuristic(ollama_stub):
 def test_ollama_down_falls_back_instead_of_crashing():
     r = OllamaClassifier("http://127.0.0.1:1", "stub", timeout=1).classify([("caller", "hello")])
     assert "fallback" in r.source
+
+
+def test_phone_numbers_spoken_as_words_are_captured():
+    from hangon.classifier import spoken_digits_to_numbers
+    ev = extract_evidence("Call me back at six four seven, five five five, zero one nine nine.")
+    assert ev.callback_number and "6475550199" in ev.callback_number.replace("-", "").replace(" ", "")
+    assert spoken_digits_to_numbers("I have one or two questions") == "I have one or two questions"
+
+
+def test_cra_as_transcribed_with_spaced_letters():
+    assert extract_evidence("you owe back taxes to the C R A").claimed_org == "Canada Revenue Agency"
+    assert extract_evidence("this is the R C A calling").claimed_org == "Canada Revenue Agency"

@@ -91,14 +91,11 @@ class Persona:
         "a retired schoolteacher who lives alone with her cat Biscuit, "
         "loves gardening, and is a little hard of hearing"
     )
-    voice: str = "default"            # Higgs voice preset or custom voice id
 
 
 @dataclass
 class Decision:
     action: Action
-    mode: Mode | None = None
-    verdict: Label | None = None
-    result: ClassifierResult | None = None
+    mode: Mode | None = None          # what the agent says next (None: nothing)
     outcome: Outcome | None = None    # set when the call is over
-    note: str = ""                    # why (for logs and the simulator)
+    note: str = ""                    # why (for logs)

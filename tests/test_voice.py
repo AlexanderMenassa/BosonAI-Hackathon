@@ -227,3 +227,36 @@ def test_model_list_parsing_handles_openai_shape():
     assert model_ids({"object": "list", "data": [{"id": "higgs-realtime"}, {"id": "higgs-realtime-1.5"}]}) == \
         ["higgs-realtime", "higgs-realtime-1.5"]
     assert model_ids({"models": [{"name": "x"}]}) == ["x"]
+
+
+def test_the_same_speech_transcribed_twice_is_one_turn(tmp_path):
+    received = []
+
+    async def handler(ws):
+        n = 0
+        async for raw in ws:
+            evt = json.loads(raw)
+            received.append(evt)
+            if evt["type"] == "session.update":
+                await ws.send(json.dumps({"type": "session.created"}))
+            elif evt["type"] == "response.create":
+                n += 1
+                await ws.send(json.dumps({"type": "response.output_audio_transcript.done", "transcript": f"Line {n}."}))
+                await ws.send(json.dumps({"type": "response.done", "response": {"status": "completed"}}))
+                if n == 1:
+                    for text in ("Hey, I'm your cousin.", "Hey, I'm your cousin, Michelle."):
+                        await ws.send(json.dumps({"type": "conversation.item.input_audio_transcription.completed",
+                                                  "item_id": "same", "transcript": text}))
+
+    async def go():
+        async with serve(handler, "127.0.0.1", 0) as srv:
+            port = srv.sockets[0].getsockname()[1]
+
+            async def fake_connect(s):
+                return await connect(f"ws://127.0.0.1:{port}")
+            call = VoiceCall("+16475550990", HeuristicClassifier(), Store(str(tmp_path / "t.db")),
+                             Settings(reports_dir=str(tmp_path / "r")), Capture(), FakeAudio(), connect=fake_connect)
+            asyncio.get_running_loop().call_later(1.0, call.hang_up)
+            return await call.run()
+    session = asyncio.run(go())
+    assert [t for w, t in session.transcript if w == "caller"] == ["Hey, I'm your cousin."]

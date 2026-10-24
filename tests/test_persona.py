@@ -33,9 +33,9 @@ def test_consecutive_stall_turns_use_different_tactics():
     assert a != b and any(t in a for t in STALL_TACTICS)
 
 
-def test_previous_line_is_not_quoted_back_but_repeating_is_forbidden():
-    g = turn_guidance(P, Mode.STALL, Evidence(), 3, Mode.STALL, last_line="Could you repeat that?")
-    assert "Could you repeat that?" not in g and "do not repeat" in g
+def test_repeating_is_forbidden_every_conversational_turn():
+    for mode in (Mode.SCREEN, Mode.STALL, Mode.GOODBYE):
+        assert "do not repeat" in turn_guidance(P, mode, Evidence(), 3, Mode.STALL)
 
 
 def test_screening_questions_rotate_and_skip_what_is_known():
@@ -46,8 +46,8 @@ def test_screening_questions_rotate_and_skip_what_is_known():
 
 
 def test_no_greeting_mid_call_but_first_margaret_line_may_introduce_her():
-    assert "do not open with a greeting" in turn_guidance(P, Mode.STALL, Evidence(), 4, Mode.STALL, "x")
-    assert "do not open with a greeting" not in turn_guidance(P, Mode.STALL, Evidence(), 2, Mode.SCREEN, "x")
+    assert "do not open with a greeting" in turn_guidance(P, Mode.STALL, Evidence(), 4, Mode.STALL)
+    assert "do not open with a greeting" not in turn_guidance(P, Mode.STALL, Evidence(), 2, Mode.SCREEN)
 
 
 def test_information_carrying_lines_are_exact():

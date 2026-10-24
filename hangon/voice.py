@@ -53,7 +53,6 @@ class VoiceCall:
         self._connect = connect  # injectable for tests
         self.ws = None
         self.prev_mode: Mode | None = None
-        self.last_line = ""
         self.pending_action: Action | None = None   # FORWARD / END waiting for the last line to finish playing
         self.assistant_item: str | None = None      # the reply currently being spoken (for truncation)
         self.responding = False
@@ -61,6 +60,7 @@ class VoiceCall:
         self.mode: Mode | None = None               # the mode of the reply most recently requested
         self.done = asyncio.Event()
         self.turns: asyncio.Queue[str] = asyncio.Queue()
+        self.seen_items: set[str] = set()           # transcript item ids already turned into caller turns
         self.loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------ output helpers
@@ -163,6 +163,8 @@ class VoiceCall:
             t = evt.get("type")
             self.dbg(f"<- {t}")
             if t in ("session.created", "session.updated"):
+                td = (((evt.get("session") or {}).get("audio") or {}).get("input") or {}).get("turn_detection")
+                self.log(f"higgs confirmed turn detection: {json.dumps(td) if td else '(not echoed)'}")
                 return
             if t == "error":
                 raise VoiceError(f"session.update rejected: {evt}")
@@ -191,7 +193,13 @@ class VoiceCall:
                 await self._on_barge_in()
             elif t == "conversation.item.input_audio_transcription.completed":
                 text = (evt.get("transcript") or "").strip()
-                if text:
+                item = evt.get("item_id") or ""
+                self.dbg(f"   transcript for item {item!r}: {text!r}")
+                if item and item in self.seen_items:
+                    self.dbg("   (same speech transcribed again: ignored)")
+                elif text:
+                    if item:
+                        self.seen_items.add(item)
                     await self.turns.put(text)
             elif t == "conversation.item.input_audio_transcription.failed":
                 self.log("  [couldn't transcribe that turn]")
@@ -205,7 +213,6 @@ class VoiceCall:
                 line = (evt.get("transcript") or "").strip()
                 if line:
                     self.session.record_agent(line)
-                    self.last_line = line
                     self.log(f"agent> {line}")
             elif t == "response.done":
                 self.responding = False
@@ -244,13 +251,16 @@ class VoiceCall:
                                                 "you were, without repeating yourself or greeting them again.")
                 continue
             self.interrupted = False
+            last = next((t for w, t in reversed(self.session.transcript) if w == "caller"), "")
+            if last and (text == last or text.startswith(last.rstrip(".!? "))) and self.session.transcript[-1][0] == "caller":
+                self.log(f"  [repeat of the last caller turn, ignored: {text!r}]")
+                continue
             self.log(f"caller> {text}")
             t0 = time.monotonic()
             d = await asyncio.to_thread(self.session.on_caller_turn, text)
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
-            guidance = turn_guidance(self.persona, d.mode, self.session.evidence, self.session.turns,
-                                     self.prev_mode, self.last_line)
+            guidance = turn_guidance(self.persona, d.mode, self.session.evidence, self.session.turns, self.prev_mode)
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")

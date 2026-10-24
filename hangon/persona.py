@@ -2,8 +2,8 @@
 
 Two layers:
 * mode_instructions(): the role for this moment (assistant screening, Margaret stalling, ...).
-* turn_guidance(): a short, fresh directive for THIS turn: what evidence is still missing, which
-  stalling tactic to use, and the agent's previous line so it does not repeat itself.
+* turn_guidance(): a short, fresh directive for THIS turn: what evidence is still missing and which
+  stalling tactic to use.
 
 Boson's own tutorial found that long behavioural prompts made the model ignore tools, so each layer is
 kept short. The engine picks the mode; the agent only speaks.
@@ -95,8 +95,7 @@ def mode_instructions(p: Persona, mode: Mode) -> str:
     raise ValueError(mode)
 
 
-def turn_guidance(p: Persona, mode: Mode, evidence: Evidence, turn: int,
-                  prev_mode: Mode | None = None, last_line: str = "") -> str:
+def turn_guidance(p: Persona, mode: Mode, evidence: Evidence, turn: int, prev_mode: Mode | None = None) -> str:
     """A short directive for this one turn. Changes every turn, which also stops the model repeating itself."""
     parts: list[str] = []
     missing = [f for f in EVIDENCE_FIELDS if not getattr(evidence, f)]
@@ -117,9 +116,8 @@ def turn_guidance(p: Persona, mode: Mode, evidence: Evidence, turn: int,
         if not (mode is Mode.STALL and prev_mode is not Mode.STALL):
             parts.append("You are mid-conversation: do not open with a greeting like 'hello there' "
                          "and do not introduce yourself again.")
-        if last_line:
-            # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
-            parts.append("Say something new: do not repeat or rephrase anything you have already said.")
+        # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
+        parts.append("Say something new: do not repeat or rephrase anything you have already said.")
     return " ".join(parts)
 
 

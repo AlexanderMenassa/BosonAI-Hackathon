@@ -60,7 +60,7 @@ _SCAM_MEDIUM = [  # weight 0.15
     (r"back taxes|\bowe\b", "claims money is owed"),
     (r"your (grand(son|daughter)|nephew|niece)", "relative-in-trouble hook"),
     (r"don'?t hang up|do not hang up", "don't-hang-up pressure"),
-    (r"canada revenue agency|\bcra\b", "claims to be the CRA"),
+    (r"canada revenue|revenue agency|\bc\.?\s?r\.?\s?a\b|\br\s?c\s?a\b", "claims to be the CRA"),
     (r"\bpolice\b|\brcmp\b", "claims to be police"),
 ]
 _LEGIT = [  # weight 0.2 (subtracted)
@@ -70,7 +70,7 @@ _LEGIT = [  # weight 0.2 (subtracted)
 ]
 
 _KNOWN_ORGS = [
-    (r"canada revenue agency|\bcra\b", "Canada Revenue Agency"),
+    (r"canada revenue|revenue agency|\bc\.?\s?r\.?\s?a\b|\br\s?c\s?a\b", "Canada Revenue Agency"),
     (r"service canada", "Service Canada"),
     (r"\bscotiabank\b", "Scotiabank"), (r"\brbc\b|royal bank", "RBC"),
     (r"\btd (bank|canada trust)\b", "TD"), (r"\bbmo\b|bank of montreal", "BMO"), (r"\bcibc\b", "CIBC"),
@@ -115,8 +115,23 @@ class HeuristicClassifier:
         )
 
 
+_DIGIT_WORDS = {"zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+                "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
+_DIGIT_WORD = r"(?:zero|one|two|three|four|five|six|seven|eight|nine|oh|o)\b"   # longest first, whole words
+_DIGIT_RUN = re.compile(rf"\b(?:{_DIGIT_WORD}[\s,.-]*){{7,}}", re.IGNORECASE)
+
+
+def spoken_digits_to_numbers(text: str) -> str:
+    """'six four seven, five five five...' -> '6475555...' (speech-to-text often writes numbers as words)."""
+    def conv(m):
+        words = re.findall(r"[a-z]+", m.group(0).lower())
+        return "".join(_DIGIT_WORDS[w] for w in words) + " "
+    return _DIGIT_RUN.sub(conv, text)
+
+
 def extract_evidence(text: str) -> Evidence:
     """Regex evidence extraction (heuristic path)."""
+    text = spoken_digits_to_numbers(text)
     org = None
     low = text.lower()
     for pat, name in _KNOWN_ORGS:
@@ -206,7 +221,7 @@ def parse_llm_json(raw: str) -> dict:
         return json.loads(m.group(0))
 
 
-def result_from_dict(d: dict, source: str, transcript: Transcript) -> ClassifierResult:
+def result_from_dict(d: dict, source: str) -> ClassifierResult:
     label = Label(str(d.get("label", "unsure")).lower())
     score = max(0.0, min(1.0, float(d.get("scam_score", 0.5))))
     ev = Evidence(
@@ -248,7 +263,7 @@ class OllamaClassifier:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 content = json.loads(resp.read())["message"]["content"]
-            return result_from_dict(parse_llm_json(content), self.name, transcript)
+            return result_from_dict(parse_llm_json(content), self.name)
         except Exception as e:  # network, bad JSON, bad label: never crash a live call
             log.warning("LLM classifier failed (%s); using heuristic fallback", e)
             r = self.fallback.classify(transcript)

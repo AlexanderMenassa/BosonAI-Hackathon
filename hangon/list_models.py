@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import urllib.error
 import urllib.request
 
 from .config import Settings
 
-URLS = ("https://api.boson.ai/v1/models", "https://api.boson.ai/models")
+URL = "https://api.boson.ai/v1/models"
 
 
 def fetch(url: str, key: str) -> dict:
@@ -39,24 +38,19 @@ def main() -> None:
     s = Settings.from_env()
     if not s.boson_api_key:
         raise SystemExit("BOSON_API_KEY is not set (put it in .env)")
-    for url in URLS:
-        try:
-            payload = fetch(url, s.boson_api_key)
-        except urllib.error.HTTPError as e:
-            print(f"{url} -> HTTP {e.code} {e.reason}", file=sys.stderr)
-            continue
-        except Exception as e:
-            print(f"{url} -> {type(e).__name__}: {e}", file=sys.stderr)
-            continue
-        if args.raw:
-            print(json.dumps(payload, indent=2))
-        ids = model_ids(payload)
-        print(f"\n{len(ids)} models from {url}:")
-        for i in ids:
-            print(("  * " if "realtime" in i.lower() else "    ") + i)
-        print("\n(* = realtime models.)  Currently using HIGGS_MODEL =", s.higgs_model)
-        return
-    print("\nNo models endpoint answered. Ask the organizers for the exact model id, then set HIGGS_MODEL in .env.")
+    try:
+        payload = fetch(URL, s.boson_api_key)
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"{URL} -> HTTP {e.code} {e.reason}")
+    except Exception as e:
+        raise SystemExit(f"{URL} -> {type(e).__name__}: {e}")
+    if args.raw:
+        print(json.dumps(payload, indent=2))
+    ids = model_ids(payload)
+    print(f"\n{len(ids)} models:")
+    for i in ids:
+        print(("  * " if "realtime" in i.lower() else "    ") + i)
+    print("\n(* = realtime models.)  Currently using HIGGS_MODEL =", s.higgs_model)
 
 
 if __name__ == "__main__":

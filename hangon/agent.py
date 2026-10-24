@@ -4,14 +4,9 @@ Backends:
 * ScriptedAgent: canned lines, fully offline. For tests and demos without an API key.
 * HiggsTextAgent: Higgs Realtime over WebSocket in text mode (output_modalities = ["text"]).
 
-Each turn the agent gets a mode (the role) and guidance (what to do this turn). How that reaches Higgs
-mid-conversation is the "steering" strategy:
-
-* "response": per-reply instructions on response.create. Higgs follows these immediately (verified with
-  `python -m hangon.probe`), so this is the default.
-* "session":  session.update before the reply. Higgs acknowledges it but the probe showed the change landing
-  late or not at all, so it is kept only for comparison.
-(System-role messages are rejected by Higgs: "Invalid role: system".)
+Each turn the agent gets a mode (the role) and guidance (what to do this turn). Both ride on that one reply as
+per-reply instructions on response.create: `python -m hangon.probe` showed Higgs follows these immediately,
+while a mid-call session.update lands late. The session itself only holds the stable base prompt.
 
 Repeat guard: Higgs sometimes copies its own previous reply word for word. If a reply is (nearly) identical to
 something already said, the agent retries once with a firmer instruction, then falls back to a scripted line,
@@ -31,7 +26,6 @@ from typing import Protocol
 from .models import Mode, Persona
 from .persona import base_prompt, build_instructions, exact_line, greeting
 
-STEERING = ("response", "session")
 REPEAT_SIMILARITY = 0.8   # replies at least this similar to an earlier line count as repeats
 
 
@@ -70,7 +64,6 @@ class ScriptedAgent:
         return None
 
     async def say(self, mode: Mode, caller_text: str | None = None, guidance: str = "") -> str:
-        n = self.p.name
         if mode is Mode.GREET:
             return greeting(self.p)
         if mode is Mode.SCREEN:
@@ -91,20 +84,17 @@ class ScriptedAgent:
 
 class HiggsTextAgent:
     """Higgs Realtime in text mode. One persistent session for the whole call, so the model keeps the
-    conversation history; the role and per-turn guidance are re-sent every turn via the steering strategy."""
+    conversation history; the role and per-turn guidance ride on each reply."""
 
     def __init__(self, persona: Persona, api_key: str,
                  url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime",
-                 model: str = "higgs-realtime", timeout: float = 30.0,
-                 steering: str = "response", debug: bool = False):
+                 model: str = "higgs-realtime", timeout: float = 30.0, debug: bool = False):
         if not api_key:
             raise AgentError("BOSON_API_KEY is not set")
-        if steering not in STEERING:
-            raise AgentError(f"unknown steering {steering!r}; use one of {STEERING}")
         self.p, self.api_key, self.url, self.model, self.timeout = persona, api_key, url, model, timeout
-        self.steering, self.debug = steering, debug
+        self.debug = debug
         self.ws = None
-        self._session_instructions: str | None = None  # what the session currently holds
+        self._configured = False
         self._said: list[str] = []                     # everything the agent has said this call
         self._fallback = ScriptedAgent(persona)        # used only if Higgs keeps repeating itself
 
@@ -128,7 +118,7 @@ class HiggsTextAgent:
         if self.ws is None:
             raise AgentError("call start() first")
         instructions = build_instructions(self.p, mode, guidance)
-        self._log(f"mode={mode.value} steering={self.steering}\n      instructions: {instructions}")
+        self._log(f"mode={mode.value}\n      instructions: {instructions}")
 
         if caller_text is not None:
             await self._send({"type": "conversation.item.create", "item": {
@@ -146,16 +136,10 @@ class HiggsTextAgent:
         return text
 
     async def _respond(self, instructions: str) -> str:
-        """Ask for one reply carrying these instructions, via the steering strategy."""
-        # For response steering the session holds only the stable base prompt; the turn's role and guidance
-        # ride on the reply itself. For session steering the session is updated before each reply.
-        wanted = instructions if self.steering == "session" else base_prompt(self.p)
-        if wanted != self._session_instructions:
-            await self._configure(wanted)
-        create: dict = {"type": "response.create"}
-        if self.steering == "response":
-            create["response"] = {"instructions": instructions}
-        await self._send(create)
+        """Ask for one reply carrying these instructions."""
+        if not self._configured:
+            await self._configure(base_prompt(self.p))
+        await self._send({"type": "response.create", "response": {"instructions": instructions}})
         return await self._collect_text()
 
     def _is_repeat(self, text: str) -> bool:
@@ -205,7 +189,7 @@ class HiggsTextAgent:
             evt = await self._recv()
             t = evt.get("type")
             if t in ("session.created", "session.updated"):
-                self._session_instructions = instructions
+                self._configured = True
                 return
             if t == "error":
                 raise AgentError(f"session.update rejected: {evt}")

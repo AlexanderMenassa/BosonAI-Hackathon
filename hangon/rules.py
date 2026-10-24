@@ -7,7 +7,7 @@ import re
 # even when the classifier thinks the caller is legit.
 HIGH_STAKES_RE = re.compile(
     r"\b(bank|banking|credit card|debit card|account number|bank account|chequing|savings|"
-    r"cra|canada revenue|revenue agency|irs|tax(es)?|service canada|social insurance|sin number|"
+    r"cra|c r a|r c a|canada revenue|revenue agency|irs|tax(es)?|service canada|social insurance|sin number|"
     r"police|rcmp|court|warrant|arrest|government|immigration|"
     r"gift cards?|wire transfer|e-?transfer|bitcoin|crypto(currency)?|western union|"
     r"payment|pay (us|me|now)|owe|debt|fine|refund|loan|mortgage|investment|lottery|prize)\b",

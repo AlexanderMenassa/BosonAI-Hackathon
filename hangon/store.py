@@ -76,9 +76,6 @@ class Store:
                 (normalize_number(number), label),
             )
 
-    def trusted(self) -> list[dict]:
-        with closing(self._conn()) as c:
-            return [dict(r) for r in c.execute("SELECT * FROM trusted")]
 
     # --- call log --------------------------------------------------------
     def save_call(self, number: str, started_at: float, ended_at: float, outcome: str,
@@ -91,7 +88,3 @@ class Store:
                  json.dumps(evidence), json.dumps(transcript), reason),
             )
             return int(cur.lastrowid)
-
-    def calls(self, limit: int = 20) -> list[dict]:
-        with closing(self._conn()) as c:
-            return [dict(r) for r in c.execute("SELECT * FROM calls ORDER BY id DESC LIMIT ?", (limit,))]
