@@ -1,5 +1,5 @@
 from hangon.models import Evidence, Mode, Persona
-from hangon.persona import STALL_TACTICS, base_prompt, build_instructions, turn_guidance
+from hangon.persona import STALL_QUESTIONS, base_prompt, build_instructions, exact_line, mode_instructions, turn_guidance
 
 P = Persona(name="Margaret")
 
@@ -9,56 +9,50 @@ def test_base_prompt_forbids_accusing_and_repeating():
     assert "never accuse the caller" in b and "scam" in b and "Never repeat" in b
 
 
-def test_first_stall_line_introduces_the_persona_later_ones_do_not():
-    first = turn_guidance(P, Mode.STALL, Evidence(), 2, prev_mode=Mode.SCREEN)
-    later = turn_guidance(P, Mode.STALL, Evidence(), 3, prev_mode=Mode.STALL)
-    assert "first line as Margaret" in first and "first line" not in later
+def test_the_assistant_handles_the_whole_call():
+    for mode in (Mode.SCREEN, Mode.STALL):
+        assert "You are Margaret's assistant" in mode_instructions(P, mode)
+    assert "assistant" in exact_line(P, Mode.GREET) and "pass this on to Margaret" in exact_line(P, Mode.GOODBYE)
+
+
+def test_stalling_is_engaged_back_and_forth():
+    m = mode_instructions(P, Mode.STALL)
+    assert "respond directly to what they just said" in m.lower() and "one natural follow-up question" in m
 
 
 def test_stall_asks_for_the_first_missing_evidence():
-    g = turn_guidance(P, Mode.STALL, Evidence(claimed_org="CRA"), 3, Mode.STALL)
-    assert "how exactly they want you to pay" in g
-    g = turn_guidance(P, Mode.STALL, Evidence(claimed_org="CRA", payment_method="gift cards"), 3, Mode.STALL)
-    assert "number to call them back" in g
+    assert "how they want the payment made" in turn_guidance(Mode.STALL, Evidence(claimed_org="CRA"), 3)
+    ev = Evidence(claimed_org="CRA", payment_method="gift cards")
+    assert "number to call them back" in turn_guidance(Mode.STALL, ev, 3)
 
 
-def test_stall_with_complete_evidence_just_stalls():
+def test_one_question_per_turn():
+    assert turn_guidance(Mode.STALL, Evidence(), 3).count("Your question this turn:") == 1
+
+
+def test_with_evidence_complete_the_questions_keep_varying():
     full = Evidence("CRA", "gift cards", "647-555-0199", "arrest")
-    assert "Then:" not in turn_guidance(P, Mode.STALL, full, 3, Mode.STALL)
-
-
-def test_consecutive_stall_turns_use_different_tactics():
-    a = turn_guidance(P, Mode.STALL, Evidence(), 3, Mode.STALL)
-    b = turn_guidance(P, Mode.STALL, Evidence(), 4, Mode.STALL)
-    assert a != b and any(t in a for t in STALL_TACTICS)
-
-
-def test_repeating_is_forbidden_every_conversational_turn():
-    for mode in (Mode.SCREEN, Mode.STALL, Mode.GOODBYE):
-        assert "do not repeat" in turn_guidance(P, mode, Evidence(), 3, Mode.STALL)
+    a, b = turn_guidance(Mode.STALL, full, 3), turn_guidance(Mode.STALL, full, 4)
+    assert a != b and any(q in a for q in STALL_QUESTIONS)
 
 
 def test_screening_questions_rotate_and_skip_what_is_known():
-    asks = [turn_guidance(P, Mode.SCREEN, Evidence(), t, Mode.SCREEN) for t in range(4)]
-    assert len({a.split(" You are")[0] for a in asks}) == 4          # four different questions
-    known = [turn_guidance(P, Mode.SCREEN, Evidence(claimed_org="CRA"), t, Mode.SCREEN) for t in range(3)]
-    assert not any("which organization" in k for k in known)        # never re-ask what they said
+    asks = [turn_guidance(Mode.SCREEN, Evidence(), t).split(" You are")[0] for t in range(4)]
+    assert len(set(asks)) == 4
+    known = [turn_guidance(Mode.SCREEN, Evidence(claimed_org="CRA"), t) for t in range(3)]
+    assert not any("which organization" in k for k in known)
 
 
-def test_no_greeting_mid_call_but_first_margaret_line_may_introduce_her():
-    assert "do not open with a greeting" in turn_guidance(P, Mode.STALL, Evidence(), 4, Mode.STALL)
-    assert "do not open with a greeting" not in turn_guidance(P, Mode.STALL, Evidence(), 2, Mode.SCREEN)
+def test_conversational_turns_never_greet_again_or_repeat():
+    for mode in (Mode.SCREEN, Mode.STALL):
+        g = turn_guidance(mode, Evidence(), 3)
+        assert "do not open with a greeting" in g and "do not repeat" in g
 
 
 def test_information_carrying_lines_are_exact():
-    from hangon.persona import exact_line, mode_instructions
-    for m in (Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE):
+    for m in (Mode.GREET, Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE, Mode.GOODBYE):
         assert exact_line(P, m) in mode_instructions(P, m)
     assert "put you through" in exact_line(P, Mode.HANDOFF)
-
-
-def test_goodbye_gets_a_concrete_excuse():
-    assert "Your excuse:" in turn_guidance(P, Mode.GOODBYE, Evidence(), 4, Mode.STALL)
 
 
 def test_guidance_is_appended_to_the_instructions():

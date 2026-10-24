@@ -10,7 +10,7 @@ from hangon.models import Mode, Persona
 
 
 DISTINCT = ["Hello, who is calling please?", "Which organization are you with?",
-            "Oh dear, let me find my glasses first.", "My cat Biscuit says hello, how lovely.",
+            "How exactly would I pay that?", "Could I have your reference number?",
             "Goodness, the kettle is whistling, goodbye!"]
 
 
@@ -51,7 +51,7 @@ def converse(turns, server_replies=None):
 
 CALL = [(Mode.GREET, None, ""),
         (Mode.SCREEN, "This is the CRA", "This turn: Ask which organization."),
-        (Mode.STALL, "You owe taxes", "This turn: Mishear one word.")]
+        (Mode.STALL, "You owe taxes", "Your question this turn: Ask which tax year.")]
 
 
 def events(received, kind):
@@ -67,8 +67,8 @@ def test_role_and_guidance_ride_on_each_reply_and_the_session_holds_only_the_bas
     creates = events(received, "response.create")
     assert "Who's calling?" in creates[0]["response"]["instructions"]
     assert "Ask which organization" in creates[1]["response"]["instructions"]
-    assert "You are now Margaret" in creates[2]["response"]["instructions"]
-    assert "Mishear one word" in creates[2]["response"]["instructions"]
+    assert "collect the details" in creates[2]["response"]["instructions"]
+    assert "Ask which tax year" in creates[2]["response"]["instructions"]
 
 
 def test_server_error_event_raises_agent_error():
@@ -120,9 +120,9 @@ def test_unreachable_server_is_an_agent_error_not_a_traceback():
 def test_repeated_reply_is_retried_and_the_fresh_one_is_used():
     received, replies = converse(CALL, server_replies=[
         "Hello? This is Margaret's assistant.", "Which company is this?", "Which company is this?",
-        "Oh dear, let me find my glasses first."])
+        "How exactly would I pay that?"])
     assert replies == ["Hello? This is Margaret's assistant.", "Which company is this?",
-                       "Oh dear, let me find my glasses first."]
+                       "How exactly would I pay that?"]
     creates = events(received, "response.create")
     assert len(creates) == 4 and "IMPORTANT" in creates[3]["response"]["instructions"]
     # the retry does not resend the caller's words

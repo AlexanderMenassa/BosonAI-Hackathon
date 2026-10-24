@@ -66,8 +66,8 @@ def typed_lines() -> NextLine:
 
 async def run_call(number: str, next_line: NextLine, classifier: Classifier, agent: Agent, store: Store,
                    settings: Settings, notifier: Notifier, echo: bool = True,
-                   show_caller: bool = False, persona: Persona | None = None) -> CallSession:
-    say = print if echo else (lambda *a, **k: None)
+                   show_caller: bool = False) -> CallSession:
+    say = print if echo else (lambda *_, **__: None)
     session = CallSession(number, classifier, store, settings)
 
     d = session.open()
@@ -77,13 +77,11 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
         notify_after_call(session, settings, notifier)
         return session
 
-    persona = persona or Persona()
     try:
         await agent.start()
         line = await agent.say(Mode.GREET)
         session.record_agent(line)
         say(f"agent> {line}")
-        prev_mode = Mode.GREET
         while True:
             text = await next_line()
             if text is None:
@@ -94,11 +92,10 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 say(f"caller> {text}")
             d = await asyncio.to_thread(session.on_caller_turn, text)
             say(f"  [{session.status_line()}]  {session.last_result.reason}")
-            guidance = turn_guidance(persona, d.mode, session.evidence, session.turns, prev_mode)
+            guidance = turn_guidance(d.mode, session.evidence, session.turns)
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")
-            prev_mode = d.mode
             if d.action in (Action.END, Action.FORWARD):
                 say(f"[{d.action.value}] {d.note}")
                 session.finish()
@@ -164,7 +161,7 @@ def main() -> None:
     else:
         next_line = typed_lines()
     asyncio.run(run_call(args.number, next_line, classifier, agent, store, settings,
-                         ConsoleNotifier(settings.reports_dir), show_caller=bool(args.scenario), persona=persona))
+                         ConsoleNotifier(settings.reports_dir), show_caller=bool(args.scenario)))
 
 
 if __name__ == "__main__":

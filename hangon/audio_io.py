@@ -3,8 +3,8 @@
 The voice call talks to an AudioIO object, so tests can swap in a fake one with no sound card.
 
 Windows note: there is no echo cancellation here (browsers have it built in; plain Python does not).
-Without headphones the microphone hears Margaret through the speakers and the server thinks the caller
-is interrupting. Use headphones, or run with --no-barge-in to mute the mic while she speaks.
+Without headphones the microphone hears the agent through the speakers and the server thinks the caller
+is interrupting. Use headphones, or run with --no-barge-in to mute the mic while the agent speaks.
 """
 from __future__ import annotations
 

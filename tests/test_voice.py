@@ -9,7 +9,7 @@ from websockets.asyncio.server import serve
 
 from hangon.classifier import HeuristicClassifier
 from hangon.config import Settings
-from hangon.models import Outcome, Persona
+from hangon.models import Mode, Outcome, Persona
 from hangon.store import Store
 from hangon.voice import VoiceCall
 
@@ -130,7 +130,8 @@ def test_scam_voice_call_stalls_collects_evidence_and_blocks(tmp_path):
     creates = [e for e in received if e["type"] == "response.create"]
     assert len(creates) == 5                                   # greeting + one reply per caller turn
     assert "Who's calling?" in creates[0]["response"]["instructions"]
-    assert any("You are now Margaret" in c["response"]["instructions"] for c in creates)
+    assert any("collect the details" in c["response"]["instructions"] for c in creates)
+    assert "Goodbye" in creates[-1]["response"]["instructions"]
     assert call.audio.played and call.audio.stopped
     assert [w for w, _ in session.transcript].count("caller") == 4
 
@@ -197,7 +198,7 @@ def test_session_uses_a_stricter_speech_detector(tmp_path):
     assert td["threshold"] == 0.8 and td["silence_duration_ms"] == 600
 
 
-def test_one_word_noise_that_cut_margaret_off_is_ignored_and_she_carries_on(tmp_path):
+def test_one_word_noise_that_cut_the_agent_off_is_ignored_and_it_carries_on(tmp_path):
     audio = FakeAudio(playing=True)
     call, session, received = run_voice(
         tmp_path, ["This is the CRA, you owe back taxes and a warrant is out for your arrest.", "E."],
@@ -260,3 +261,34 @@ def test_the_same_speech_transcribed_twice_is_one_turn(tmp_path):
             return await call.run()
     session = asyncio.run(go())
     assert [t for w, t in session.transcript if w == "caller"] == ["Hey, I'm your cousin."]
+
+
+def test_a_one_word_answer_on_the_callers_own_turn_gets_a_reply(tmp_path):
+    """Regression: a lone "Hello?" or "John." used to be thrown away, leaving the call silent."""
+    _, session, received = run_voice(tmp_path, ["Hello?", "John."], hang_up_after=1.5, number="+16475550989")
+    assert [t for w, t in session.transcript if w == "caller"] == ["Hello?", "John."]
+    assert len([e for e in received if e["type"] == "response.create"]) == 3   # greeting + a reply to each
+
+
+def test_an_interruption_does_not_leave_the_call_waiting_on_the_cancelled_reply(tmp_path):
+    """If Higgs cancels the interrupted reply without a response.done, the next reply must not be held up."""
+    class Sink:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+    call = VoiceCall("+1", HeuristicClassifier(), Store(str(tmp_path / "t.db")), Settings(), Capture(),
+                     FakeAudio(playing=True))
+    call.ws, call.assistant_item, call.responding = Sink(), "item1", True
+
+    async def go():
+        await call._on_barge_in()
+        assert call.responding is False and call.interrupted
+        t0 = asyncio.get_running_loop().time()
+        await call.speak(Mode.STALL, "next question")
+        return asyncio.get_running_loop().time() - t0
+    waited = asyncio.run(go())
+    assert waited < 0.5                                         # no 10-second wait for a reply that never ends
+    assert [e["type"] for e in call.ws.sent] == ["conversation.item.truncate", "response.create"]

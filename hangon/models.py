@@ -15,7 +15,7 @@ class Mode(str, Enum):
     """What the conversational agent should be doing on its next utterance."""
     GREET = "greet"                # opening line with the transcription notice
     SCREEN = "screen"              # unsure: ask who/which org/why
-    STALL = "stall"                # scam: confused, chatty persona
+    STALL = "stall"                # scam: keep them talking with polite follow-up questions
     HANDOFF = "handoff"            # legit: "one moment" before forwarding
     HOLD = "hold"                  # legit but high-stakes: not forwarded
     TAKE_MESSAGE = "take_message"  # unsure at the cap: take a message, end
@@ -84,13 +84,7 @@ class ClassifierResult:
 
 @dataclass
 class Persona:
-    name: str = "Margaret"
-    age: int = 78
-    chattiness: str = "high"          # low | medium | high
-    backstory: str = (
-        "a retired schoolteacher who lives alone with her cat Biscuit, "
-        "loves gardening, and is a little hard of hearing"
-    )
+    name: str = "Margaret"            # the protected person; the agent is always her assistant
 
 
 @dataclass

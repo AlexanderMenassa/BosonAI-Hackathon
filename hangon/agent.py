@@ -1,4 +1,4 @@
-"""The conversational agent: speaks in the persona's voice. It never decides routing.
+"""The conversational agent: speaks as the protected person's assistant. It never decides routing.
 
 Backends:
 * ScriptedAgent: canned lines, fully offline. For tests and demos without an API key.
@@ -53,11 +53,11 @@ class ScriptedAgent:
             "Could you tell me which company that is?",
         ])
         self._stall = itertools.cycle([
-            f"Oh, hello dear, it's {n}. Sorry, I was out in the garden. What was that again?",
-            "My cat Biscuit just knocked over a plant, hold on. Can you say that slower?",
-            "I'm not very good with phones, dear. Could you spell that for me?",
-            "Oh my, that sounds serious. Now who did you say you were?",
-            "Hang on, let me find my glasses. They were right here a minute ago.",
+            f"Before I pass anything on to {n}, which department did you say you're with?",
+            "I see. And how exactly would the payment be made?",
+            "Could I have a number to call you back on, so I can note it down?",
+            "Just so I understand, what happens if it isn't done today?",
+            "Could you give me your full name and a reference number for this?",
         ])
 
     async def start(self) -> None:
@@ -70,11 +70,7 @@ class ScriptedAgent:
             return next(self._screen)
         if mode is Mode.STALL:
             return next(self._stall)
-        if mode in (Mode.HANDOFF, Mode.HOLD, Mode.TAKE_MESSAGE):
-            return exact_line(self.p, mode)
-        if mode is Mode.GOODBYE:
-            return "Oh, there's someone at the door, dear. I must go. Goodbye now!"
-        raise ValueError(mode)
+        return exact_line(self.p, mode)  # HANDOFF, HOLD, TAKE_MESSAGE, GOODBYE
 
     async def close(self) -> None:
         return None

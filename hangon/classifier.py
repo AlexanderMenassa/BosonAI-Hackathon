@@ -72,7 +72,7 @@ _LEGIT = [  # weight 0.2 (subtracted)
 _KNOWN_ORGS = [
     (r"canada revenue|revenue agency|\bc\.?\s?r\.?\s?a\b|\br\s?c\s?a\b", "Canada Revenue Agency"),
     (r"service canada", "Service Canada"),
-    (r"\bscotiabank\b", "Scotiabank"), (r"\brbc\b|royal bank", "RBC"),
+    (r"\bscotia ?bank\b", "Scotiabank"), (r"\brbc\b|royal bank", "RBC"),
     (r"\btd (bank|canada trust)\b", "TD"), (r"\bbmo\b|bank of montreal", "BMO"), (r"\bcibc\b", "CIBC"),
     (r"microsoft", "Microsoft"), (r"amazon", "Amazon"), (r"\bapple\b", "Apple"),
     (r"\brcmp\b|\bpolice\b", "Police"), (r"interac", "Interac"),

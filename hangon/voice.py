@@ -1,7 +1,7 @@
-"""Voice calls: your microphone is the caller, Higgs speaks as the assistant / Margaret.
+"""Voice calls: your microphone is the caller, Higgs speaks as the protected person's assistant.
 
     python -m hangon.voice                         # headphones recommended
-    python -m hangon.voice --no-barge-in           # no headphones: mic is muted while Margaret speaks
+    python -m hangon.voice --no-barge-in           # no headphones: mic is muted while the agent speaks
     python -m hangon.voice --classifier ollama     # local LLM (slow on CPU: long pauses)
     python -m hangon.voice --list-devices          # pick --input-device / --output-device
 
@@ -15,8 +15,9 @@ How a turn works (same brain as the text simulator):
       -> response.create with that turn's role and guidance (per-reply instructions, the method that passed
          the probe)
       -> Higgs speaks; audio plays through the speakers
-    caller talks over Margaret -> server stops generating (interrupt_response=true), we flush the speaker
-      and truncate her stored reply to what the caller actually heard.
+    caller talks over the agent -> server stops generating (interrupt_response=true), we flush the speaker
+      and truncate its stored reply to what the caller actually heard. A short noise during the agent's reply is
+      not a turn: the agent carries on. Any utterance on the caller's own turn counts, even one word.
 """
 from __future__ import annotations
 
@@ -52,11 +53,10 @@ class VoiceCall:
         self.session = CallSession(number, classifier, store, settings)
         self._connect = connect  # injectable for tests
         self.ws = None
-        self.prev_mode: Mode | None = None
         self.pending_action: Action | None = None   # FORWARD / END waiting for the last line to finish playing
         self.assistant_item: str | None = None      # the reply currently being spoken (for truncation)
         self.responding = False
-        self.interrupted = False                    # Margaret was cut off by the caller (or a noise)
+        self.interrupted = False                    # the agent was cut off by the caller (or a noise)
         self.mode: Mode | None = None               # the mode of the reply most recently requested
         self.done = asyncio.Event()
         self.turns: asyncio.Queue[str] = asyncio.Queue()
@@ -133,7 +133,6 @@ class VoiceCall:
             self.audio.start(self._on_mic_chunk)
             tasks = [asyncio.create_task(self._receiver()), asyncio.create_task(self._turn_worker())]
             await self.speak(Mode.GREET)
-            self.prev_mode = Mode.GREET
             await self.done.wait()
         finally:
             for t in tasks:
@@ -226,11 +225,12 @@ class VoiceCall:
                 return
 
     async def _on_barge_in(self) -> None:
-        """Caller started talking. If Margaret is mid-sentence, stop her where the caller heard her."""
+        """Caller started talking. If the agent is mid-sentence, stop it where the caller heard it."""
         if self.audio.is_playing() and self.assistant_item and not self.pending_action:
             played_ms = int(self.audio.played_samples() * 1000 / RATE)
             self.audio.clear()
             self.interrupted = True
+            self.responding = False  # the server cancels this reply (interrupt_response); don't wait on it
             self.log("  [caller interrupted]")
             await self.send({"type": "conversation.item.truncate", "item_id": self.assistant_item,
                              "content_index": 0, "audio_end_ms": played_ms})
@@ -243,14 +243,14 @@ class VoiceCall:
                 text += " " + self.turns.get_nowait()
             if self.session.ended or self.pending_action:
                 continue
-            if len(text.split()) < self.settings.min_turn_words:
-                self.log(f"  [ignored fragment: {text!r}]")
-                if self.interrupted and self.mode in (Mode.SCREEN, Mode.STALL):
-                    self.interrupted = False
+            was_interrupted, self.interrupted = self.interrupted, False
+            if was_interrupted and len(text.split()) < self.settings.min_interrupt_words:
+                # A cough or "mm" while the agent was talking: not a turn. Let the agent carry on.
+                self.log(f"  [noise during the agent's reply, ignored: {text!r}]")
+                if self.mode in (Mode.SCREEN, Mode.STALL):
                     await self.speak(self.mode, "You were cut off by a small noise. Carry on naturally from where "
                                                 "you were, without repeating yourself or greeting them again.")
                 continue
-            self.interrupted = False
             last = next((t for w, t in reversed(self.session.transcript) if w == "caller"), "")
             if last and (text == last or text.startswith(last.rstrip(".!? "))) and self.session.transcript[-1][0] == "caller":
                 self.log(f"  [repeat of the last caller turn, ignored: {text!r}]")
@@ -260,12 +260,11 @@ class VoiceCall:
             d = await asyncio.to_thread(self.session.on_caller_turn, text)
             self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
                      f"  ({time.monotonic() - t0:.1f}s)")
-            guidance = turn_guidance(self.persona, d.mode, self.session.evidence, self.session.turns, self.prev_mode)
+            guidance = turn_guidance(d.mode, self.session.evidence, self.session.turns)
             if d.action in (Action.END, Action.FORWARD):
                 self.pending_action = d.action
                 self.log(f"[{d.action.value}] {d.note}")
             await self.speak(d.mode, guidance)
-            self.prev_mode = d.mode
 
     async def _finish_after_playback(self) -> None:
         """Let the last line finish playing, then forward or end the call."""
@@ -291,7 +290,7 @@ async def _main_async(args, settings: Settings) -> None:
     audio = SoundDeviceIO(args.input_device, args.output_device, mute_mic_while_playing=args.no_barge_in)
     print(f"model: {settings.higgs_model}")
     print(f"audio: mic {audio.in_rate} Hz, speaker {audio.out_rate} Hz"
-          f"{'  (mic muted while Margaret speaks)' if args.no_barge_in else '  (use headphones)'}")
+          f"{'  (mic muted while the agent speaks)' if args.no_barge_in else '  (use headphones)'}")
     call = VoiceCall(args.number, make_classifier(args.classifier, settings), store, settings,
                      ConsoleNotifier(settings.reports_dir), audio, Persona(name=args.persona_name),
                      voice=args.voice, stt_language=args.language, debug=args.debug)
@@ -324,7 +323,7 @@ def main() -> None:
     ap.add_argument("--persona-name", default="Margaret")
     ap.add_argument("--voice", default="default", help="Higgs voice preset or registered voice id")
     ap.add_argument("--language", default="en", help="transcription language; '' to let Higgs detect it")
-    ap.add_argument("--no-barge-in", action="store_true", help="mute the mic while Margaret speaks (no headphones)")
+    ap.add_argument("--no-barge-in", action="store_true", help="mute the mic while the agent speaks (no headphones)")
     ap.add_argument("--input-device", type=int)
     ap.add_argument("--output-device", type=int)
     ap.add_argument("--list-devices", action="store_true")

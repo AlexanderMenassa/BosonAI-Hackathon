@@ -1,12 +1,15 @@
-"""Prompts for the conversational agent.
+"""Prompts for the conversational agent: the protected person's assistant, for the whole call.
 
 Two layers:
-* mode_instructions(): the role for this moment (assistant screening, Margaret stalling, ...).
-* turn_guidance(): a short, fresh directive for THIS turn: what evidence is still missing and which
-  stalling tactic to use.
+* mode_instructions(): the role for this moment (screening, stalling, fixed information lines).
+* turn_guidance(): a short, fresh directive for THIS turn: the one question to ask next.
 
-Boson's own tutorial found that long behavioural prompts made the model ignore tools, so each layer is
-kept short. The engine picks the mode; the agent only speaks.
+Stalling is a natural back-and-forth: the assistant listens, responds to what the caller just said, and asks one
+real follow-up question, like a careful gatekeeper collecting details before passing anything on. Each answer
+invites another question, and the questions steer toward the evidence that is still missing.
+
+Boson's own tutorial found that long behavioural prompts made the model ignore tools, so each layer is kept
+short. The engine picks the mode; the agent only speaks.
 """
 from __future__ import annotations
 
@@ -14,18 +17,12 @@ from .models import EVIDENCE_FIELDS, Evidence, Mode, Persona
 
 GREETING = "Hello? This is {name}'s assistant, calls may be transcribed. Who's calling?"
 
-_CHATTINESS = {
-    "low": "You keep your little stories to a sentence.",
-    "medium": "You add a short story or aside now and then.",
-    "high": "You love to ramble with friendly little stories from your life.",
-}
-
 # What to ask for, in this order, while the evidence checklist is incomplete.
 _STALL_ASKS = {
-    "claimed_org": "Ask, confused, which organization they are with, and ask them to spell it.",
-    "payment_method": "Ask, confused, how exactly they want you to pay.",
-    "callback_number": "Ask for a number to call them back, and get them to repeat it slowly.",
-    "urgency_tactic": "Ask, worried, what happens if you can't do it today.",
+    "claimed_org": "Ask exactly which organization and department they are with.",
+    "payment_method": "Ask exactly how they want the payment made.",
+    "callback_number": "Ask for a number to call them back on, then read it back to check you have it right.",
+    "urgency_tactic": "Ask what happens if it isn't done today.",
 }
 _SCREEN_ASKS = {  # used only while that evidence is missing
     "claimed_org": "Ask which organization they are calling from.",
@@ -33,19 +30,13 @@ _SCREEN_ASKS = {  # used only while that evidence is missing
 }
 _SCREEN_ALWAYS = ("Ask what the call is about.", "Ask for their name.")
 
-# Rotated so consecutive turns never use the same stalling move.
-STALL_TACTICS = (
-    "Ask them to spell their name slowly, and get one letter wrong.",
-    "Drift into a short story from your life, then ask what they were saying.",
-    "Say you need to find a pen and paper, then ask them to start again.",
-    "Mishear one word they just said and ask about it.",
-    "Ask a slow, confused question about how this works.",
-)
-GOODBYE_EXCUSES = (
-    "someone is at the door",
-    "the kettle is whistling",
-    "your neighbour has just come over",
-    "you need to go and lie down",
+# Once the evidence is in, keep the conversation going with a different kind of question each turn.
+STALL_QUESTIONS = (
+    "Ask for a specific detail about their claim, such as which account, which year, or what it is for.",
+    "Ask how the process works, step by step.",
+    "Ask for their full name and a reference or ID number.",
+    "Repeat back in your own words what you understood so far, and ask if that is right.",
+    "Ask why it has to be done this way.",
 )
 
 
@@ -62,6 +53,7 @@ def exact_line(p: Persona, mode: Mode) -> str | None:
         Mode.HOLD: (f"Thank you. {n} can't come to the phone right now, but I'll let them know you called, "
                     "and they'll call you back on your organization's official number."),
         Mode.TAKE_MESSAGE: f"I'm sorry, I couldn't quite catch what this is about. I'll let {n} know you called. Goodbye.",
+        Mode.GOODBYE: f"Thank you, I have what I need. I'll pass this on to {n}. Goodbye.",
     }.get(mode)
 
 
@@ -85,37 +77,27 @@ def mode_instructions(p: Persona, mode: Mode) -> str:
                 "question. Never ask for something they have already told you. Do not agree to anything, and do not "
                 "comment on whether the call is genuine.")
     if mode is Mode.STALL:
-        return (f"You are now {n}, age {p.age}, {p.backstory}. You have taken the phone from your assistant. "
-                f"Be warm, a bit confused, and slow to understand. {_CHATTINESS.get(p.chattiness, '')} "
-                "Keep them talking. Use each excuse (your hearing, finding a pen, your glasses, the cat) at most once "
-                "in the whole call. Never give real information, never agree to pay, and never end the call yourself.")
-    if mode is Mode.GOODBYE:
-        return (f"You are {n}. Make a warm, natural excuse to end the call, and end with the word goodbye. "
-                "Stay friendly and fully in character. Two short sentences.")
+        return (f"You are {n}'s assistant. Before anything can be passed on to {n}, you calmly collect the details. "
+                "Respond directly to what they just said, then ask exactly one natural follow-up question. Be polite, "
+                "professional and engaged. Never give real information, never agree to pay, and never end the call "
+                "yourself.")
     raise ValueError(mode)
 
 
-def turn_guidance(p: Persona, mode: Mode, evidence: Evidence, turn: int, prev_mode: Mode | None = None) -> str:
+def turn_guidance(mode: Mode, evidence: Evidence, turn: int) -> str:
     """A short directive for this one turn. Changes every turn, which also stops the model repeating itself."""
     parts: list[str] = []
     missing = [f for f in EVIDENCE_FIELDS if not getattr(evidence, f)]
 
     if mode is Mode.STALL:
-        if prev_mode is not Mode.STALL:
-            parts.append(f"This is your first line as {p.name}: say you've just come to the phone.")
-        parts.append("This turn: " + STALL_TACTICS[turn % len(STALL_TACTICS)])
-        if missing:
-            parts.append("Then: " + _STALL_ASKS[missing[0]])
+        ask = _STALL_ASKS[missing[0]] if missing else STALL_QUESTIONS[turn % len(STALL_QUESTIONS)]
+        parts.append("Your question this turn: " + ask)
     elif mode is Mode.SCREEN:
         asks = [_SCREEN_ASKS[f] for f in missing if f in _SCREEN_ASKS] + list(_SCREEN_ALWAYS)
-        parts.append("This turn: " + asks[turn % len(asks)])  # rotate so an evasive caller gets varied questions
-    elif mode is Mode.GOODBYE:
-        parts.append(f"Your excuse: {GOODBYE_EXCUSES[turn % len(GOODBYE_EXCUSES)]}.")
+        parts.append("Your question this turn: " + asks[turn % len(asks)])  # varied questions for evasive callers
 
-    if mode in (Mode.SCREEN, Mode.STALL, Mode.GOODBYE):
-        if not (mode is Mode.STALL and prev_mode is not Mode.STALL):
-            parts.append("You are mid-conversation: do not open with a greeting like 'hello there' "
-                         "and do not introduce yourself again.")
+    if mode in (Mode.SCREEN, Mode.STALL):
+        parts.append("You are mid-conversation: do not open with a greeting and do not introduce yourself again.")
         # Deliberately NOT quoting the previous line: quoting it seemed to prime the model to copy it.
         parts.append("Say something new: do not repeat or rephrase anything you have already said.")
     return " ".join(parts)

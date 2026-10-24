@@ -45,10 +45,11 @@ class Settings:
     higgs_model: str = "higgs-realtime"  # run `python -m hangon.list_models` to see what your key can use
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
 
-    # Voice: how sure Higgs's speech detector must be (0..1; server default 0.55) and the shortest caller
-    # utterance (in words) that counts as a turn. Stops coughs and "mm-hm" from interrupting Margaret.
+    # Voice: how sure Higgs's speech detector must be (0..1; server default 0.55), and the fewest words that count
+    # as a real interruption while the agent is speaking (shorter is treated as noise and the agent carries on).
+    # Outside interruptions every utterance counts, so one-word answers like "John" or "Yes" work.
     vad_threshold: float = 0.8
-    min_turn_words: int = 2
+    min_interrupt_words: int = 2
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -73,5 +74,5 @@ class Settings:
             boson_url=e.get("BOSON_REALTIME_URL",
                             f"wss://api.boson.ai/v1/realtime?model={e.get('HIGGS_MODEL', 'higgs-realtime')}"),
             vad_threshold=float(e.get("HANGON_VAD_THRESHOLD", 0.8)),
-            min_turn_words=int(e.get("HANGON_MIN_TURN_WORDS", 2)),
+            min_interrupt_words=int(e.get("HANGON_MIN_INTERRUPT_WORDS", 2)),
         )
