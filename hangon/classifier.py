@@ -236,7 +236,8 @@ class OllamaClassifier:
             "model": self.model,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0},
+            "options": {"temperature": 0, "num_predict": 200},
+            "keep_alive": "30m",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": "<transcript>\n" + render_transcript(transcript) + "\n</transcript>"},
