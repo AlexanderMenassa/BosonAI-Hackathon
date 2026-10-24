@@ -82,7 +82,7 @@ class VoiceCall:
         if self.stt_language:
             transcription["language"] = self.stt_language
         return {"type": "session.update", "session": {
-            "model": "higgs-realtime",
+            "model": self.settings.higgs_model,
             "instructions": base_prompt(self.persona),
             "output_modalities": ["audio"],
             "audio": {
@@ -279,6 +279,7 @@ async def _main_async(args, settings: Settings) -> None:
     from .sim import make_classifier
     store = Store(settings.db_path)
     audio = SoundDeviceIO(args.input_device, args.output_device, mute_mic_while_playing=args.no_barge_in)
+    print(f"model: {settings.higgs_model}")
     print(f"audio: mic {audio.in_rate} Hz, speaker {audio.out_rate} Hz"
           f"{'  (mic muted while Margaret speaks)' if args.no_barge_in else '  (use headphones)'}")
     call = VoiceCall(args.number, make_classifier(args.classifier, settings), store, settings,

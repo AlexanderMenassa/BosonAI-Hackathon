@@ -41,7 +41,8 @@ def make_agent(kind: str, persona: Persona, s: Settings, debug: bool = False) ->
     if kind == "scripted":
         return ScriptedAgent(persona)
     if kind == "higgs":
-        return HiggsTextAgent(persona, s.boson_api_key, s.boson_url, steering=s.higgs_steering, debug=debug)
+        return HiggsTextAgent(persona, s.boson_api_key, s.boson_url, model=s.higgs_model,
+                              steering=s.higgs_steering, debug=debug)
     raise SystemExit(f"unknown agent {kind!r}")
 
 

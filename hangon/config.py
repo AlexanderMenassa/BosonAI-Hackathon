@@ -42,6 +42,7 @@ class Settings:
 
     # Higgs Realtime
     boson_api_key: str = ""
+    higgs_model: str = "higgs-realtime"  # run `python -m hangon.list_models` to see what your key can use
     boson_url: str = "wss://api.boson.ai/v1/realtime?model=higgs-realtime"
     higgs_steering: str = "response"  # response | session  (run `python -m hangon.probe`)
 
@@ -69,7 +70,9 @@ class Settings:
             ollama_model=e.get("OLLAMA_MODEL", "llama3.2:3b"),
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
-            boson_url=e.get("BOSON_REALTIME_URL", "wss://api.boson.ai/v1/realtime?model=higgs-realtime"),
+            higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),
+            boson_url=e.get("BOSON_REALTIME_URL",
+                            f"wss://api.boson.ai/v1/realtime?model={e.get('HIGGS_MODEL', 'higgs-realtime')}"),
             higgs_steering=e.get("HIGGS_STEERING", "response"),
             vad_threshold=float(e.get("HANGON_VAD_THRESHOLD", 0.8)),
             min_turn_words=int(e.get("HANGON_MIN_TURN_WORDS", 2)),

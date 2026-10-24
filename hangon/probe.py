@@ -23,8 +23,8 @@ def rule(word: str) -> str:
 
 
 class Raw:
-    def __init__(self, ws, debug: bool):
-        self.ws, self.debug = ws, debug
+    def __init__(self, ws, debug: bool, model: str = "higgs-realtime"):
+        self.ws, self.debug, self.model = ws, debug, model
 
     async def send(self, evt: dict) -> None:
         if self.debug:
@@ -39,7 +39,7 @@ class Raw:
 
     async def configure(self, instructions: str) -> None:
         await self.send({"type": "session.update", "session": {
-            "model": "higgs-realtime", "instructions": instructions, "output_modalities": ["text"]}})
+            "model": self.model, "instructions": instructions, "output_modalities": ["text"]}})
         while True:
             evt = await self.recv()
             if evt.get("type") in ("session.created", "session.updated"):
@@ -73,7 +73,7 @@ async def try_method(method: str, s: Settings, debug: bool) -> tuple[bool, list[
     replies: list[str] = []
     try:
         async with connect(s.boson_url, additional_headers={"Authorization": f"Bearer {s.boson_api_key}"}) as ws:
-            r = Raw(ws, debug)
+            r = Raw(ws, debug, s.higgs_model)
             await r.configure(rule(WORDS[0]))
             await r.user("Hello, who is this?")
             replies.append(await r.reply())
@@ -111,6 +111,7 @@ def main() -> None:
     s = Settings.from_env()
     if not s.boson_api_key:
         raise SystemExit("BOSON_API_KEY is not set (put it in .env)")
+    print(f"model: {s.higgs_model}")
 
     results = {}
     for method in args.method or ["session", "response", "system"]:

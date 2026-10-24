@@ -213,3 +213,17 @@ def test_bits_said_back_to_back_are_merged_into_one_turn(tmp_path):
     callers = [t for w, t in session.transcript if w == "caller"]
     assert callers == ["Hi, this is Riverside Pharmacy, the prescription is ready for pickup."]
     assert session.outcome is Outcome.FORWARDED
+
+
+def test_model_name_comes_from_settings(tmp_path):
+    from hangon.config import Settings as S
+    s = S(higgs_model="higgs-realtime-1.5")
+    call = VoiceCall("+1", HeuristicClassifier(), Store(str(tmp_path / "t.db")), s, Capture(), FakeAudio())
+    assert call.session_config()["session"]["model"] == "higgs-realtime-1.5"
+
+
+def test_model_list_parsing_handles_openai_shape():
+    from hangon.list_models import model_ids
+    assert model_ids({"object": "list", "data": [{"id": "higgs-realtime"}, {"id": "higgs-realtime-1.5"}]}) == \
+        ["higgs-realtime", "higgs-realtime-1.5"]
+    assert model_ids({"models": [{"name": "x"}]}) == ["x"]
