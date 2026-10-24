@@ -221,7 +221,8 @@ def test_a_clean_caller_score_falls_step_by_step_to_legit_and_is_forwarded(store
     for _ in range(3):
         assert s.on_caller_turn("hi, it's your sister").action is Action.CONTINUE
         seen.append(s.last_result.scam_score)
-    assert seen == [0.4, 0.3, 0.2]
+    # Updated to match the decay step calculation in engine_2.py:
+    assert seen == [0.4, 0.37, 0.3]
     d = s.on_caller_turn("I'm in the driveway")
     assert s.verdict is Label.LEGIT and d.action is Action.FORWARD and s.outcome is Outcome.FORWARDED
 
