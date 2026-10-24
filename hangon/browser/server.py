@@ -21,11 +21,13 @@ from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Response
 
-from ..classifier import HeuristicClassifier
+from ..classifier import Classifier, HeuristicClassifier
 from ..config import Settings
 from ..gateway import Gateway, GatewayError
-from .media import MediaBridge
-from ..models import ConnectionState as State, FailureReason, Mode
+from .media import MediaBridge, screening_error_reason
+from ..models import Action, ClassifierResult, ConnectionState as State, FailureReason, Label, Mode
+from ..persona import known_facts, turn_guidance
+from ..sim import make_classifier
 from ..store import Store
 
 WEB = Path(__file__).resolve().parents[2] / "web"
@@ -90,6 +92,25 @@ class LiveReceiverTransport(ControlTransport):
         return self.room.media is not None and self.room.media.call_id == call_id and self.room.media.route == "human"
 
 
+class SafeBrowserClassifier:
+    """A provider failure must never approve or block a browser caller."""
+
+    def __init__(self, delegate: Classifier):
+        self.delegate = delegate
+
+    def classify(self, transcript):
+        try:
+            result = self.delegate.classify(transcript)
+            if "fallback" not in result.source:
+                return result
+            match = re.search(r"fallback after: ([A-Za-z][A-Za-z0-9_]*)", result.source)
+            failure = match.group(1) if match else "fallback"
+        except Exception as exc:
+            failure = type(exc).__name__
+        return ClassifierResult(Label.UNSURE, 0.5, f"classifier unavailable ({failure})",
+                                source="unavailable")
+
+
 @dataclass
 class Participant:
     role: str
@@ -101,7 +122,8 @@ class Participant:
 class Room:
     def __init__(self, code: str, store: Store, ring_timeout: float = 30.0,
                  connect_timeout: float = 30.0, live_media: bool = False,
-                 boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None):
+                 boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None,
+                 classifier: Classifier | None = None, call_log_dir: Path | None = None):
         self.code = code
         self.store = store
         self.lock = asyncio.Lock()
@@ -113,7 +135,13 @@ class Room:
                                   boson_key, boson_url, ice_servers, self._on_interrupt) if live_media else None)
         self.media_started = 0.0
         self.assistant_caption = ""
-        self.gateway = Gateway(store, HeuristicClassifier(), self.screening,
+        self.screening_issue = ""
+        self.asked: set[str] = set()
+        self.known: dict[str, str] = {}
+        self.call_log_dir = call_log_dir
+        self.call_log_path: Path | None = None
+        self.logged_outcome = False
+        self.gateway = Gateway(store, SafeBrowserClassifier(classifier or HeuristicClassifier()), self.screening,
                                self.receiver_transport, receiver_available=self.receiver_available,
                                ring_timeout=ring_timeout, connect_timeout=connect_timeout)
 
@@ -149,7 +177,10 @@ class Room:
             "route": g.route.value if g.route else None,
             "state": g.state.value, "revision": g.revision,
             "summary": g.session.caller_summary if g.session else "",
+            "classifier_source": g.session.last_result.source if g.session and g.session.last_result else "",
+            "verdict": g.session.verdict.value if g.session else "unsure",
             "assistant_caption": self.assistant_caption if g.state is State.SCREENING else "",
+            "screening_issue": self.screening_issue if g.state is State.MESSAGE_PENDING else "",
             "events": [vars(event) for event in g.events[-12:]],
             "audio": ("idle" if self.media and g.state is State.ENDED else
                       "stopped" if self.media and g.state is State.MESSAGE_PENDING else
@@ -169,22 +200,62 @@ class Room:
             if not g.incoming or g.state is not State.SCREENING:
                 return
             call_id = g.incoming.call_id
+            self._log(f"caller> {line}")
+            started = time.monotonic()
             await asyncio.to_thread(g.caller_turn, line)
+            decision = g.last_decision
+            if g.session and g.session.last_result:
+                result = g.session.last_result
+                self._log(f"  [{g.session.status_line()}] {result.reason} "
+                          f"({time.monotonic() - started:.1f}s; classifier={result.source})")
+            if decision and decision.action in (Action.END, Action.FORWARD):
+                self._log(f"[{decision.action.value}] {decision.note}")
             if self.media and self.media.call_id == call_id and self.media.screen:
-                if g.state is State.SCREENING:
-                    await self.media.screen.speak(Mode.SCREEN)
-                elif g.state is State.RINGING:
+                if decision and decision.mode is not None:
+                    session = g.session
+                    heard = [text for who, text in session.transcript if who == "caller"]
+                    for fact, value in known_facts(session.last_result, session.evidence, heard).items():
+                        self.known.setdefault(fact, value)
+                    guidance = turn_guidance(decision.mode, self.known, self.asked)
+                    await self.media.screen.speak(decision.mode, guidance, line, heard[:-1])
+                    if decision.action in (Action.END, Action.FORWARD):
+                        await self.media.screen.finish_reply()
+                if g.state is State.RINGING:
                     self.media.pause_screen()
                 elif g.state in (State.ENDED, State.MESSAGE_PENDING):
                     await self._close_media()
             await self.broadcast()
 
     async def _on_caption(self, line: str) -> None:
-        async with self.lock:
-            if self.gateway.state is State.SCREENING:
-                # Generated text may include audio that the browser never heard after interruption.
-                self.assistant_caption = line
-                await self.broadcast()
+        if self.gateway.state is State.SCREENING:
+            # Record a completed caption before the next caller turn is classified.
+            self.assistant_caption = line
+            self.gateway.session.record_agent(line)
+            self._log(f"agent> {line}")
+            await self.broadcast()
+
+    def _log(self, entry: str) -> None:
+        if not self.call_log_path:
+            return
+        try:
+            with self.call_log_path.open("a", encoding="utf-8") as file:
+                file.write(" ".join(entry.split())[:2000] + "\n")
+        except OSError:
+            pass  # Logging must not change call routing.
+
+    def _start_log(self, call_id: str) -> None:
+        self.call_log_path = None
+        if not self.call_log_dir:
+            return
+        try:
+            self.call_log_dir.mkdir(parents=True, exist_ok=True)
+            path = self.call_log_dir / f"browser-{call_id}.log"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            self.call_log_path = path
+            print(f"Browser call log: {path}", flush=True)
+        except OSError:
+            pass  # A log path failure must not end a call.
 
     async def _on_interrupt(self) -> None:
         if self.caller and self.caller.socket and self.gateway.state is State.SCREENING:
@@ -197,6 +268,7 @@ class Room:
         async with self.lock:
             g = self.gateway
             if g.incoming and g.state not in (State.ENDED, State.MESSAGE_PENDING):
+                self.screening_issue = reason if reason.startswith("screening_") else ""
                 g.fail(g.incoming.call_id, FailureReason.MEDIA_UNAVAILABLE if reason == "media_unavailable"
                        else FailureReason.SCREENING_UNAVAILABLE)
                 await self._close_media()
@@ -207,6 +279,12 @@ class Room:
             await self.media.close()
 
     async def broadcast(self) -> None:
+        if (self.gateway.state is State.ENDED and self.gateway.session and
+                self.gateway.session.outcome and not self.logged_outcome):
+            blocked = self.store.is_blocked(self.gateway.incoming.number)
+            self._log(f"=== call over: outcome={self.gateway.session.outcome.value}, "
+                      f"number {'BLOCKED' if blocked else 'not blocked'} ===")
+            self.logged_outcome = True
         for participant in (self.caller, self.receiver):
             if participant and participant.socket:
                 try:
@@ -252,6 +330,12 @@ class Room:
                     raise GatewayError("invalid request_id")
                 g.arrive(request_id, number)
                 self.assistant_caption = ""
+                self.screening_issue = ""
+                self.asked.clear()
+                self.known.clear()
+                self._start_log(g.incoming.call_id)
+                self.logged_outcome = False
+                self._log(f"incoming call from {number}")
                 if self.media and g.state is not State.ENDED:
                     self.media_started = time.monotonic()
             elif kind == "media.offer" and self.media:
@@ -278,7 +362,8 @@ class Room:
                 if participant.role == "caller" and g.state is State.SCREENING and not self.media.screen:
                     try:
                         await self.media.start_screen(call_id)
-                    except Exception:
+                    except Exception as exc:
+                        self.screening_issue = screening_error_reason(exc)
                         g.fail(call_id, FailureReason.SCREENING_UNAVAILABLE)
                         await self._close_media()
             elif kind == "call.line" and participant.role == "caller":
@@ -301,6 +386,8 @@ class Room:
                     raise GatewayError("invalid event_id")
                 g.command(participant.role, kind, str(data.get("call_id", "")),
                           str(data.get("event_id", "")), data.get("expected_revision"))
+                if kind == "call.end":
+                    self._log(f"{participant.role} hung up")
                 if kind == "call.accept" and self.media and g.state is State.CONNECTING and self.caller and self.caller.socket:
                     self.media.pause_screen()
                     await self.caller.socket.send(json.dumps({"type": "media.clear", "reason": "handoff",
@@ -320,11 +407,14 @@ class Room:
             g = self.gateway
             if g.incoming and g.state is not State.ENDED:
                 if participant.role == "caller":
+                    self._log("caller disconnected")
                     g.command("caller", "call.end", g.incoming.call_id,
                               secrets.token_urlsafe(12), g.revision)
                 elif g.state is State.RINGING:
+                    self._log("receiver disconnected while ringing")
                     g.fail(g.incoming.call_id, FailureReason.RECEIVER_UNAVAILABLE)
                 elif g.state in (State.CONNECTING, State.CONNECTED):
+                    self._log("receiver disconnected")
                     g.command("receiver", "call.end", g.incoming.call_id,
                               secrets.token_urlsafe(12), g.revision)
             if self.media and (participant.role == "caller" or g.state in
@@ -357,12 +447,15 @@ class Room:
 class Hub:
     def __init__(self, store: Store, ring_timeout: float = 30.0,
                  connect_timeout: float = 30.0, live_media: bool = False,
-                 boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None):
+                 boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None,
+                 classifier_factory=None, call_log_dir: Path | None = None):
         self.store = store
         self.ring_timeout = ring_timeout
         self.connect_timeout = connect_timeout
         self.live_media, self.boson_key, self.boson_url = live_media, boson_key, boson_url
         self.ice_servers = ice_servers or []
+        self.classifier_factory = classifier_factory or HeuristicClassifier
+        self.call_log_dir = call_log_dir
         self.rooms: dict[str, Room] = {}
         self.lock = asyncio.Lock()
 
@@ -372,7 +465,8 @@ class Hub:
             if kind == "room.create":
                 code = secrets.token_urlsafe(6)
                 room = Room(code, self.store, self.ring_timeout, self.connect_timeout,
-                            self.live_media, self.boson_key, self.boson_url, self.ice_servers)
+                            self.live_media, self.boson_key, self.boson_url, self.ice_servers,
+                            self.classifier_factory(), self.call_log_dir)
                 room.media_ice_servers = self.ice_servers
                 self.rooms[code] = room
                 role = "caller"
@@ -448,9 +542,16 @@ async def run(host: str, port: int, db_path: str, ring_timeout: float = 30.0,
               key_file: str | None = None) -> None:
     store = Store(db_path)
     settings = Settings.from_env()
+    classifier_name = os.environ.get("HANGON_CLASSIFIER", "gemini")
+    if classifier_name not in ("heuristic", "ollama", "gemini"):
+        raise ValueError("HANGON_CLASSIFIER must be heuristic, ollama, or gemini")
+    if classifier_name == "gemini" and not settings.gemini_api_key:
+        raise ValueError("GEMINI_API_KEY is required for the selected classifier")
     ice_servers = ice_configuration()
     hub = Hub(store, ring_timeout, connect_timeout, True,
-              settings.boson_api_key, settings.boson_url, ice_servers)
+              settings.boson_api_key, settings.boson_url, ice_servers,
+              lambda: make_classifier(classifier_name, settings),
+              WEB.parent / "artifacts" / "call-logs")
     tls = None
     if cert and key_file:
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

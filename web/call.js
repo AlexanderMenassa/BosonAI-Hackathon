@@ -49,6 +49,22 @@ function updateTimer() {
 
 function render() {
   const state = snapshot?.state || "idle", inCall = !!active(), hasCall = !!snapshot?.call_id;
+  const messageReason = [...(snapshot?.events || [])].reverse().find(e => e.type === "call.message_requested")?.detail;
+  const messageDetail = ({screening_unavailable:"Screening audio failed",
+    media_unavailable:"Audio connection failed", receiver_unavailable:"The receiver is unavailable",
+    receiver_declined:"The receiver declined", ring_timeout:"The receiver did not answer"})[messageReason] ||
+    "The call could not continue";
+  const screeningIssue = ({screening_key_missing:"Higgs API key is missing on the server",
+    screening_auth_failed:"Higgs rejected the server key",
+    screening_credits_unavailable:"Higgs credits are unavailable",
+    screening_configuration_rejected:"Higgs rejected the audio setup",
+    screening_provider_error:"Higgs reported a session error",
+    screening_service_busy:"Higgs is busy; retry the call",
+    screening_timeout:"Higgs did not respond in time",
+    screening_connection_closed:"Higgs closed the connection",
+    screening_connection_failed:"Could not connect to Higgs",
+    screening_session_ended:"Higgs ended the session",
+    screening_audio_overflow:"Audio could not keep up with the call"})[snapshot?.screening_issue];
   if (state === "connected" && (connectedCall !== snapshot.call_id || !connectedAt)) {
     connectedCall = snapshot.call_id; connectedAt = Date.now();
   } else if (state !== "connected") { connectedAt = null; connectedCall = null; }
@@ -62,7 +78,7 @@ function render() {
   const phases = {idle:"READY WHEN YOU ARE", screening:"SCREENING CALL", ringing:role === "receiver" ? "INCOMING CALL" : "RINGING RECEIVER", connecting:"CONNECTING AUDIO", connected:"ON A CALL", message_pending:"MESSAGE REQUESTED", ended:"CALL ENDED"};
   $("call-phase").textContent = !role ? "SET UP A ROOM TO BEGIN" : !hasCall ? "READY WHEN YOU ARE" : phases[state] || state.toUpperCase();
   $("display-number").textContent = snapshot?.caller_number ? formatNumber(snapshot.caller_number) : role === "receiver" ? "No incoming call" : "Hang On";
-  $("call-detail").textContent = !role ? "A private call space for two browsers" : !hasCall ? role === "receiver" ? "Be ready to receive calls" : "Enter a test number to call" : state === "screening" ? "Your call is being screened" : state === "ringing" ? role === "receiver" ? "Tap Accept to connect" : "Waiting for the receiver" : state === "connected" ? "Connected through browser audio" : state === "message_pending" ? "The receiver is unavailable" : state === "ended" ? "The call has finished" : "Getting ready";
+  $("call-detail").textContent = !role ? "A private call space for two browsers" : !hasCall ? role === "receiver" ? "Be ready to receive calls" : "Enter a test number to call" : state === "screening" ? "Your call is being screened" : state === "ringing" ? role === "receiver" ? "Tap Accept to connect" : "Waiting for the receiver" : state === "connected" ? "Connected through browser audio" : state === "message_pending" ? screeningIssue || messageDetail : state === "ended" ? "The call has finished" : "Getting ready";
   if (snapshot?.state === "connected") $("remote-audio").muted = false;
   $("summary").textContent = snapshot?.summary ? `Screening summary: ${snapshot.summary}` : "";
   $("assistant-caption").textContent = snapshot?.assistant_caption ?
@@ -126,6 +142,7 @@ function stopMedia() {
   if (peer) { peer.close(); peer = null; }
   if (localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
   $("remote-audio").srcObject = null;
+  $("remote-audio").muted = false;
   $("audio-status").textContent = "stopped";
 }
 
@@ -141,6 +158,7 @@ async function offerMedia(callId) {
     if (peer !== pc || peerCall !== callId) return;
     const audio = $("remote-audio");
     audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+    audio.muted = !(role === "caller" && snapshot?.state === "screening");
     try { await audio.play(); $("play-audio").hidden = true; }
     catch { $("play-audio").hidden = false; showError("Tap Enable sound to hear the call."); }
   };
@@ -266,7 +284,7 @@ $("mute").onclick = () => {
   $("mute").lastChild.textContent = muted ? " Unmute" : " Mute";
 };
 $("play-audio").onclick = async () => {
-  try { await $("remote-audio").play(); $("play-audio").hidden = true; showError(""); }
+  try { $("remote-audio").muted = false; await $("remote-audio").play(); $("play-audio").hidden = true; showError(""); }
   catch { showError("Sound is still blocked. Check browser playback settings."); }
 };
 setInterval(updateTimer, 1000);

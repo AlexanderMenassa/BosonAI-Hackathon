@@ -434,7 +434,7 @@ class LLMClassifier:
         try:
             result = result_from_dict(parse_llm_json(self.complete(SYSTEM_PROMPT, user)), self.name, said)
         except Exception as e:  # network, bad JSON, bad label: never crash a live call
-            log.warning("LLM classifier failed (%s); using heuristic fallback", e)
+            log.warning("LLM classifier failed (%s); using fallback assessment", e)
             r = self.fallback.classify(transcript)
             r.source = f"{r.source} (fallback after: {type(e).__name__})"
             return r

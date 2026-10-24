@@ -18,6 +18,35 @@ from ..models import Mode, Persona
 from ..persona import base_prompt, build_instructions
 
 
+class ScreeningSetupError(RuntimeError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def screening_error_reason(exc: Exception) -> str:
+    """Classify failures without exposing provider text or credentials."""
+    if isinstance(exc, ScreeningSetupError):
+        return exc.reason
+    if isinstance(exc, TimeoutError):
+        return "screening_timeout"
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status in (401, 403):
+        return "screening_auth_failed"
+    if status == 402:
+        return "screening_credits_unavailable"
+    if status in (429, 503):
+        return "screening_service_busy"
+    code = getattr(getattr(exc, "rcvd", None), "code", None)
+    if code == 3000:
+        return "screening_auth_failed"
+    if code == 4429:
+        return "screening_credits_unavailable"
+    if code == 1013:
+        return "screening_service_busy"
+    return "screening_connection_failed"
+
+
 class OutboundAudio(MediaStreamTrack):
     kind = "audio"
 
@@ -95,17 +124,19 @@ class HiggsScreen:
         self.responding = False
         self.awaiting_response = False
         self.pending_mode: Mode | None = None
+        self.pending_context: tuple[str, str | None, list[str] | None] = ("", None, None)
         self.item: str | None = None
         self.generation = 0
         self.suppress_output = False
         self.cancelled_response: str | None = None
         self.current_response: str | None = None
         self.seen_items: set[str] = set()
+        self.turn_tasks: set[asyncio.Task] = set()
         self.persona = Persona()
 
     async def start(self) -> None:
         if not self.key:
-            raise RuntimeError("BOSON_API_KEY is not configured")
+            raise ScreeningSetupError("screening_key_missing")
         from websockets.asyncio.client import connect
         opener = self.connect or connect
         self.ws = await asyncio.wait_for(opener(self.url, additional_headers={
@@ -121,24 +152,26 @@ class HiggsScreen:
         await self.ws.send(json.dumps(config))
         while True:
             event = json.loads(await asyncio.wait_for(self.ws.recv(), 15))
-            if event.get("type") == "session.updated":
+            if event.get("type") in ("session.created", "session.updated"):
                 break
             if event.get("type") == "error":
-                raise RuntimeError("Higgs rejected audio session configuration")
+                raise ScreeningSetupError("screening_configuration_rejected")
         self.active = True
         self.output.enabled = True
         self.task = asyncio.create_task(self._run())
         await self.speak(Mode.GREET)
 
-    async def speak(self, mode: Mode) -> None:
+    async def speak(self, mode: Mode, guidance: str = "", caller_text: str | None = None,
+                    history: list[str] | None = None) -> None:
         if self.active and not self.paused and self.ws:
             if self.responding:
                 self.pending_mode = mode
+                self.pending_context = (guidance, caller_text, history)
                 return
             self.responding = True
             self.awaiting_response = True
             await self.ws.send(json.dumps({"type": "response.create", "response": {
-                "instructions": build_instructions(self.persona, mode)}}))
+                "instructions": build_instructions(self.persona, mode, guidance, caller_text, history or ())}}))
 
     def feed(self, pcm: bytes) -> None:
         if self.active and not self.paused:
@@ -146,6 +179,14 @@ class HiggsScreen:
                 self.input.put_nowait(pcm)
             except asyncio.QueueFull:
                 asyncio.create_task(self.on_error("screening_audio_overflow"))
+
+    async def finish_reply(self, timeout: float = 6.0) -> None:
+        """Give a final line time to play; never hold a call indefinitely."""
+        deadline = time.monotonic() + timeout
+        while self.active and time.monotonic() < deadline:
+            if not self.responding and self.pending_mode is None and not self.output.buffer and self.output.queue.empty():
+                return
+            await asyncio.sleep(0.05)
 
     async def _run(self) -> None:
         sender = asyncio.create_task(self._send_audio())
@@ -157,25 +198,30 @@ class HiggsScreen:
                     continue
                 if kind == "input_audio_buffer.speech_started":
                     self.generation += 1
-                    self.suppress_output = True
-                    self.cancelled_response = self.current_response
-                    self.awaiting_response = False
-                    was_playing = self.responding or bool(self.output.buffer) or not self.output.queue.empty()
-                    self.output.clear()
-                    if self.on_interrupt:
-                        await self.on_interrupt()
-                    if self.item and was_playing:
-                        await self.ws.send(json.dumps({"type": "conversation.item.truncate",
-                            "item_id": self.item, "content_index": 0,
-                            "audio_end_ms": int(self.output.delivered * 1000 / RATE)}))
-                    self.item = None
+                    # Speech can arrive before Higgs creates the greeting. There is
+                    # no response to interrupt yet; keep its pending audio enabled.
+                    if self.current_response is not None or self.output.buffer or not self.output.queue.empty():
+                        self.suppress_output = True
+                        self.cancelled_response = self.current_response
+                        self.awaiting_response = False
+                        was_playing = self.responding or bool(self.output.buffer) or not self.output.queue.empty()
+                        self.output.clear()
+                        if self.on_interrupt:
+                            await self.on_interrupt()
+                        if self.item and was_playing:
+                            await self.ws.send(json.dumps({"type": "conversation.item.truncate",
+                                "item_id": self.item, "content_index": 0,
+                                "audio_end_ms": int(self.output.delivered * 1000 / RATE)}))
+                        self.item = None
                 elif kind == "conversation.item.input_audio_transcription.completed":
                     item = event.get("item_id")
                     line = (event.get("transcript") or "").strip()
                     if line and item not in self.seen_items:
                         if item:
                             self.seen_items.add(item)
-                        await self.on_turn(line)
+                        task = asyncio.create_task(self.on_turn(line))
+                        self.turn_tasks.add(task)
+                        task.add_done_callback(self.turn_tasks.discard)
                 elif kind == "response.output_item.added":
                     self.item = (event.get("item") or {}).get("id")
                 elif kind == "response.created":
@@ -194,16 +240,22 @@ class HiggsScreen:
                         await self.on_caption(line)
                 elif kind == "response.done":
                     self.responding = False
+                    self.current_response = None
                     if self.pending_mode is not None:
                         mode, self.pending_mode = self.pending_mode, None
-                        await self.speak(mode)
-                elif kind in ("error", "session.idle_timeout", "session.max_duration_reached"):
-                    raise RuntimeError("Higgs audio session ended")
+                        context = self.pending_context
+                        await self.speak(mode, *context)
+                elif kind == "error":
+                    raise ScreeningSetupError("screening_provider_error")
+                elif kind in ("session.idle_timeout", "session.max_duration_reached"):
+                    raise ScreeningSetupError("screening_session_ended")
+            if self.active and not self.paused:
+                raise ScreeningSetupError("screening_connection_closed")
         except asyncio.CancelledError:
             raise
-        except Exception:
-            if self.active:
-                asyncio.create_task(self.on_error("screening_unavailable"))
+        except Exception as exc:
+            if self.active and not self.paused:
+                asyncio.create_task(self.on_error(screening_error_reason(exc)))
         finally:
             sender.cancel()
             with suppress(asyncio.CancelledError):
@@ -218,12 +270,14 @@ class HiggsScreen:
                                                   "audio": base64.b64encode(pcm).decode()}))
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             if self.active:
-                asyncio.create_task(self.on_error("screening_unavailable"))
+                asyncio.create_task(self.on_error(screening_error_reason(exc)))
 
     def pause(self) -> None:
         self.paused = True
+        self.pending_mode = None
+        self.pending_context = ("", None, None)
         self.output.clear()
         self.output.enabled = False
 

@@ -80,7 +80,7 @@ class Settings:
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),
             gemini_api_key=e.get("GEMINI_API_KEY", ""),
             gemini_model=e.get("GEMINI_MODEL", "gemini-3.5-flash-lite"),
-            gemini_timeout=float(e.get("GEMINI_TIMEOUT", 15)),
+            gemini_timeout=float(e.get("GEMINI_TIMEOUT", 30)),
             boson_api_key=e.get("BOSON_API_KEY", ""),
             higgs_model=e.get("HIGGS_MODEL", "higgs-realtime"),
             higgs_voice=e.get("HIGGS_VOICE", "default"),

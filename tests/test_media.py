@@ -10,6 +10,7 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
 from hangon.media import HiggsScreen, MediaBridge, OutboundAudio
+from hangon.browser.media import ScreeningSetupError, screening_error_reason
 from hangon.models import Mode
 
 
@@ -154,7 +155,8 @@ def test_higgs_screen_configures_audio_and_deduplicates_final_transcript():
                 event = json.loads(raw)
                 received.append(event)
                 if event["type"] == "session.update":
-                    await ws.send(json.dumps({"type": "session.updated"}))
+                    # Boson can acknowledge setup with session.created only.
+                    await ws.send(json.dumps({"type": "session.created"}))
                 elif event["type"] == "response.create":
                     await ws.send(json.dumps({"type": "response.created", "response": {"id": "r1"}}))
                     await ws.send(json.dumps({"type": "response.output_audio.delta",
@@ -237,6 +239,96 @@ def test_higgs_speech_start_clears_playback_and_notifies_browser():
             finally:
                 await screen.close()
                 output.stop()
+    asyncio.run(scenario())
+
+
+def test_early_caller_speech_does_not_silence_pending_greeting():
+    async def scenario():
+        delivered = asyncio.Event()
+
+        async def provider(ws):
+            async for raw in ws:
+                event = json.loads(raw)
+                if event["type"] == "session.update":
+                    await ws.send(json.dumps({"type": "session.updated"}))
+                elif event["type"] == "response.create":
+                    await ws.send(json.dumps({"type": "input_audio_buffer.speech_started"}))
+                    await ws.send(json.dumps({"type": "response.created", "response": {"id": "greeting"}}))
+                    await ws.send(json.dumps({"type": "response.output_audio.delta",
+                                               "response_id": "greeting",
+                                               "delta": base64.b64encode(b"\x01\x00" * 480).decode()}))
+                    delivered.set()
+
+        async def noop(_):
+            pass
+
+        async with serve(provider, "127.0.0.1", 0) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+            async def opener(target, **kwargs):
+                return await connect(target)
+
+            output = OutboundAudio()
+            screen = HiggsScreen(noop, noop, noop, "test-key", url, output, opener)
+            try:
+                await screen.start()
+                await asyncio.wait_for(delivered.wait(), 2)
+                async def queued():
+                    while output.queue.empty():
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(queued(), 2)
+                assert not screen.suppress_output
+            finally:
+                await screen.close()
+                output.stop()
+
+    asyncio.run(scenario())
+
+
+def test_screening_failure_reason_excludes_provider_text():
+    assert screening_error_reason(ScreeningSetupError("screening_key_missing")) == "screening_key_missing"
+    assert screening_error_reason(TimeoutError("sensitive detail")) == "screening_timeout"
+    assert screening_error_reason(RuntimeError("sensitive detail")) == "screening_connection_failed"
+
+
+def test_higgs_provider_error_reports_safe_reason():
+    async def scenario():
+        errors = []
+
+        async def provider(ws):
+            async for raw in ws:
+                event = json.loads(raw)
+                if event["type"] == "session.update":
+                    await ws.send(json.dumps({"type": "session.updated"}))
+                elif event["type"] == "response.create":
+                    await ws.send(json.dumps({"type": "error", "error": {
+                        "message": "do not expose provider details"}}))
+
+        async def noop(_):
+            pass
+
+        async def on_error(reason):
+            errors.append(reason)
+
+        async with serve(provider, "127.0.0.1", 0) as server:
+            url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+            async def opener(target, **kwargs):
+                return await connect(target)
+
+            output = OutboundAudio()
+            screen = HiggsScreen(noop, noop, on_error, "test-key", url, output, opener)
+            try:
+                await screen.start()
+                async def failed():
+                    while not errors:
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(failed(), 2)
+                assert errors == ["screening_provider_error"]
+            finally:
+                await screen.close()
+                output.stop()
+
     asyncio.run(scenario())
 
 

@@ -1,6 +1,6 @@
 # Hang On — AI Call Screening
 
-**An AI assistant that screens unknown callers, stalls suspected scammers while collecting evidence, and routes ordinary legitimate calls.**
+**An AI assistant that screens unknown callers, ends confirmed scam calls, and routes ordinary legitimate calls.**
 
 Alexander Menasaa and Baiwei Zhong · Boson AI Hackathon · Toronto · October 2026
 
@@ -20,7 +20,7 @@ For the hackathon:
 - Implement real browser ringing, Accept/Decline controls, and two-way audio handoff. Only phone numbers, the telephone network, and SMS/guardian notifications are simulated.
 - Keep real phone calls, carrier blocking, and actual SMS delivery outside the minimum demo.
 
-**Success:** you speak to Higgs, your ordinary call is approved, your teammate accepts, and you can hear each other with Higgs disconnected. Also demonstrate trusted bypass, blocked rejection, scam stalling/reporting, and high-stakes holds without ringing the receiver.
+**Success:** you speak to Higgs, your ordinary call is approved, your teammate accepts, and you can hear each other with Higgs disconnected. Also demonstrate trusted bypass, blocked rejection, scam ending/reporting, and high-stakes holds without ringing the receiver.
 
 ## 2. Hackathon fit
 
@@ -107,7 +107,7 @@ The browser adapter uses a `websockets` server, an `aiortc` media bridge, and th
 1. Receive the incoming call at the gateway and assign a call ID; do not ring the receiver yet.
 2. Reject a blocked test number before starting a model session.
 3. Ring the teammate's browser for a trusted test number; wait for Accept before connecting their audio.
-4. Connect all other callers to Higgs for screening, beginning with: “Hello, this is [persona]'s assistant. Calls may be transcribed. Who's calling?”
+4. Connect all other callers to Higgs for screening, with the current persona speaking as the protected person, beginning with “Hello?”
 
 ### Screen and route
 
@@ -117,15 +117,15 @@ After every finalized caller turn, classify the running transcript. Keep `legit`
 | --- | --- | --- |
 | Legit and low risk | Ring receiver with screening summary; connect on Accept | “Oh, one moment.” |
 | High stakes, without a scam verdict | Hold for independently verified callback | Take details; do not promise a transfer |
-| Scam | Collect evidence within a fixed cap | Become confused and chatty; ask for missing details |
+| Scam | End screening immediately | Say goodbye, then record the verdict and available evidence |
 | Unsure | Continue clarification within the cap | Ask who, which organization, and why |
 | Still unsure at the cap | Take a message and end; do not block | End politely |
 
-Bank/government claims, money requests, and secret-code requests prevent automatic transfer even when the classifier says `legit`. A scam verdict still takes the bounded stalling path. A conversation judged legitimate does not prove the caller's identity.
+Bank/government claims, money requests, and secret-code requests prevent automatic transfer even when the classifier says `legit`. A scam verdict ends screening. A conversation judged legitimate does not prove the caller's identity.
 
 ### End and report
 
-End **screening** on accepted handoff, message completion, caller hang-up, screening time limit, or a complete scam-evidence checklist. Approval starts ringing; it does not end the whole call. After approval, pause screening while ringing. On Accept, stop/cancel Higgs output, clear queued audio, detach Higgs input, and enable the human audio bridge. Store the screening report; do not send the subsequent human conversation to Higgs or the classifier.
+End **screening** on accepted handoff, message completion, caller hang-up, screening time limit, or a scam verdict. Approval starts ringing; it does not end the whole call. After approval, pause screening while ringing. On Accept, stop/cancel Higgs output, clear queued audio, detach Higgs input, and enable the human audio bridge. Store the screening report; do not send the subsequent human conversation to Higgs or the classifier.
 
 The **human call** remains active until either participant hangs up or disconnects. Release both media connections and notify both browsers when it ends. Use separate screening and ringing timers; the screening limit must not terminate an accepted human conversation. A late Accept or assessment after hang-up must not revive the call.
 
@@ -215,6 +215,8 @@ Run from the project environment after supplying `BOSON_API_KEY` in the ignored 
 ```
 
 Set `HANGON_STUN_URL` if needed. For relay access, set `HANGON_TURN_URL` and `HANGON_TURN_SECRET` for a TURN server configured with the same REST shared secret; the backend generates hour-limited credentials. These values and the Boson key stay server-side. Set `HANGON_RELAY_ONLY=1` for a relay-only acceptance run. See `.env.example` for names. An HTTPS page alone does not establish WebRTC connectivity. Open the same `https://<hostname>:8765/` URL on both devices, create and join a room, click Ready on the receiver, then Call on the caller. Use headphones. The browser asks for microphone permission when Ready or Call is clicked. The caller's test number selects routing from the receiver's lists; it does not authorize receiver controls.
+
+Each browser call writes a private text log to `artifacts/call-logs/browser-<call-id>.log` in this repository. The server prints the exact path when the call starts. These logs contain caller transcripts, generated Higgs captions, classifier results, and the final outcome; they are not shown in the browser. Terminal calls run through `hangon.voice` and keep their own console output.
 
 For the explicit acceptance run, record the browser and device on each side, network and TURN route, whether Higgs spoke and transcribed the caller, whether an approved call rang and carried two-way human audio, interruption behavior, and whether End from each side released both microphones. Keep the offline `python scripts/verify.py` result separate from this live record.
 

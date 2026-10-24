@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from .classifier import Classifier
 from .engine import CallSession
-from .models import (Action, ConnectionState as State, EndReason, FailureReason,
+from .models import (Action, ConnectionState as State, Decision, EndReason, FailureReason,
                      GatewayEvent, IncomingCall, Outcome, Route)
 from .store import Store, normalize_number
 
@@ -50,6 +50,7 @@ class Gateway:
         self.events: list[GatewayEvent] = []
         self._acks: dict[str, tuple[str, str, str, GatewayEvent]] = {}
         self._closed: set[int] = set()
+        self.last_decision: Decision | None = None
 
     def _emit(self, kind: str, detail: str = "") -> GatewayEvent:
         self.revision += 1
@@ -78,6 +79,7 @@ class Gateway:
         self.route = self.session.admission_route()
         self.state, self.revision, self.events, self._acks = State.ARRIVED, 0, [], {}
         self._closed = set()
+        self.last_decision = None
         self.ring_started, self.connect_started, self.pending_reason = None, None, ""
         arrival = self._emit("call.arrived")
         self._emit("call.route", self.route.value)
@@ -100,7 +102,9 @@ class Gateway:
             raise GatewayError("call is not screening")
         try:
             decision = self.session.on_caller_turn(text)  # type: ignore[union-attr]
+            self.last_decision = decision
         except Exception:
+            self.last_decision = None
             return self._fail(FailureReason.SCREENING_UNAVAILABLE)
         if decision.action is Action.FORWARD:
             try:

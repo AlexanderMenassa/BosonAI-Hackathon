@@ -22,11 +22,11 @@ Keep model adapters separate from decision authority. Changes to persistence mus
 
 ## Known gaps relative to the roadmap
 
-The WebRTC bridge and Higgs audio adapter have offline coverage, including a synthetic audio round trip and fake Higgs server. Live Higgs, browser microphone/playback, two physical devices, and TURN relay remain unverified. Dashboard events, quote-backed assessment contracts, asynchronous stale-result handling, and an independent idle timer are planned work. The browser currently uses the heuristic classifier on finalized caller transcripts; Phase 3 must replace this with the structured separate-classifier flow.
+The WebRTC bridge and Higgs audio adapter have offline coverage, including a synthetic audio round trip and fake Higgs server. Live Higgs, browser microphone/playback, two physical devices, and TURN relay remain unverified. Dashboard events, quote-backed assessment contracts, asynchronous stale-result handling, and an independent idle timer are planned work. The browser selects heuristic, Ollama, or Gemini classification for finalized caller transcripts. Quote-backed asynchronous assessment contracts and live provider evaluation remain planned work.
 
 The harness verifies the current offline baseline. It does not certify production scam detection, caller identity, live model reliability, or the full planned product.
 
-Unknown callers enter Higgs screening. The engine classifies each finalized caller turn, keeps confirmed scams in a bounded evidence-gathering conversation, and ends screening when evidence is complete or the turn/time cap is reached. The caller never reaches the receiver on a scam verdict.
+Unknown callers enter Higgs screening. The engine classifies each finalized caller turn, ends screening immediately on a scam verdict. The caller never reaches the receiver on a scam verdict.
 
 ## Planned call gateway
 
