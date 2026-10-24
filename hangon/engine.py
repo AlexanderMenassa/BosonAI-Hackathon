@@ -123,11 +123,11 @@ class CallSession:
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:
-                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK, result,
-                                 "legit but high-stakes: not forwarded", action=Action.END)
+                return self._end(Mode.HOLD, Outcome.HELD_CALLBACK,
+                                 "legit but high-stakes: not forwarded")
             if self.browser_call_id is None:
                 self.outcome = Outcome.FORWARDED
-            return Decision(Action.FORWARD, Mode.HANDOFF, self.verdict, result,
+            return Decision(Action.FORWARD, Mode.HANDOFF,
                             outcome=self.outcome, note="legit: forwarding")
 
         # UNSURE

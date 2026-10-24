@@ -94,7 +94,7 @@ class Participant:
 
 class Room:
     def __init__(self, code: str, store: Store, ring_timeout: float = 30.0,
-                 connect_timeout: float = 10.0, live_media: bool = False,
+                 connect_timeout: float = 30.0, live_media: bool = False,
                  boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None):
         self.code = code
         self.lock = asyncio.Lock()
@@ -331,7 +331,7 @@ class Room:
 
 class Hub:
     def __init__(self, store: Store, ring_timeout: float = 30.0,
-                 connect_timeout: float = 10.0, live_media: bool = False,
+                 connect_timeout: float = 30.0, live_media: bool = False,
                  boson_key: str = "", boson_url: str = "", ice_servers: list[dict] | None = None):
         self.store = store
         self.ring_timeout = ring_timeout
@@ -418,7 +418,7 @@ async def static_page(connection: ServerConnection, request):
 
 
 async def run(host: str, port: int, db_path: str, ring_timeout: float = 30.0,
-              connect_timeout: float = 10.0, cert: str | None = None,
+              connect_timeout: float = 30.0, cert: str | None = None,
               key_file: str | None = None) -> None:
     store = Store(db_path)
     store.add_trusted(PROFILES["trusted"], "Synthetic trusted")
@@ -447,7 +447,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--db", help="synthetic demo SQLite path; default is temporary")
     parser.add_argument("--ring-timeout", type=float, default=30.0)
-    parser.add_argument("--connect-timeout", type=float, default=10.0)
+    parser.add_argument("--connect-timeout", type=float, default=30.0)
     parser.add_argument("--cert", help="TLS certificate for HTTPS/WSS")
     parser.add_argument("--key-file", help="TLS private key for HTTPS/WSS")
     args = parser.parse_args()

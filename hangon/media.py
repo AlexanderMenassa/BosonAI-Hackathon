@@ -23,30 +23,48 @@ class OutboundAudio(MediaStreamTrack):
 
     def __init__(self):
         super().__init__()
-        self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=50)
+        self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=200)
         self.buffer = bytearray()
         self.samples = 0
         self.delivered = 0
         self.enabled = False
+        self.started_at: float | None = None
+        self.queued_bytes = 0
+        self.max_buffer_ms = 10000
 
     def push(self, pcm: bytes) -> None:
-        if not self.enabled:
+        if not self.enabled or not pcm:
             return
-        try:
-            self.queue.put_nowait(pcm)
-        except asyncio.QueueFull:
-            self.clear()
+        limit = self.max_buffer_ms * RATE * 2 // 1000
+        if len(pcm) > limit:
+            pcm = pcm[-limit:]
+        while self.queued_bytes + len(self.buffer) + len(pcm) > limit and not self.queue.empty():
+            self.queued_bytes -= len(self.queue.get_nowait())
+        if self.queued_bytes + len(self.buffer) + len(pcm) > limit:
+            del self.buffer[:self.queued_bytes + len(self.buffer) + len(pcm) - limit]
+        if self.queue.full():
+            self.queued_bytes -= len(self.queue.get_nowait())
+        self.queue.put_nowait(pcm)
+        self.queued_bytes += len(pcm)
 
     def clear(self) -> None:
         self.buffer.clear()
         while not self.queue.empty():
             self.queue.get_nowait()
+        self.queued_bytes = 0
 
     async def recv(self):
         # A fixed 20 ms cadence keeps the WebRTC sender alive while the route is silent.
+        if self.started_at is None:
+            self.started_at = time.monotonic()
+        delay = self.started_at + self.samples / RATE - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
         while len(self.buffer) < 960:
             try:
-                self.buffer.extend(self.queue.get_nowait())
+                chunk = self.queue.get_nowait()
+                self.queued_bytes -= len(chunk)
+                self.buffer.extend(chunk)
             except asyncio.QueueEmpty:
                 break
         pcm = bytes(self.buffer[:960])
@@ -59,7 +77,6 @@ class OutboundAudio(MediaStreamTrack):
         frame.time_base = Fraction(1, RATE)
         frame.planes[0].update(pcm)
         self.samples += 480
-        await asyncio.sleep(0.02)
         return frame
 
 
@@ -124,7 +141,7 @@ class HiggsScreen:
             try:
                 self.input.put_nowait(pcm)
             except asyncio.QueueFull:
-                self.on_error("screening_audio_overflow")
+                asyncio.create_task(self.on_error("screening_audio_overflow"))
 
     async def _run(self) -> None:
         sender = asyncio.create_task(self._send_audio())
@@ -266,7 +283,8 @@ class MediaBridge:
         try:
             while self.call_id == call_id:
                 frame = await track.recv()
-                pcm = b"".join(bytes(f.planes[0]) for f in resampler.resample(frame))
+                pcm = b"".join(bytes(f.planes[0])[:f.samples * 2]
+                               for f in resampler.resample(frame))
                 if role == "caller" and self.route == "screen" and self.screen:
                     self.screen.feed(pcm)
                 elif self.route == "human":
@@ -312,6 +330,7 @@ class MediaBridge:
             self.screen = None
         for output in self.outputs.values():
             output.clear()
+            output.max_buffer_ms = 300
             output.enabled = True
         self.route = "human"
         return True

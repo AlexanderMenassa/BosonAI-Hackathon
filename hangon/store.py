@@ -103,6 +103,11 @@ class Store:
             row = c.execute("SELECT * FROM calls WHERE request_id=?", (request_id,)).fetchone()
             return dict(row) if row else None
 
+    def calls(self) -> list[dict]:
+        """Return call records for local inspection and verification."""
+        with closing(self._conn()) as c:
+            return [dict(row) for row in c.execute("SELECT * FROM calls ORDER BY id")]
+
     def complete_screening(self, public_call_id: str, ended_at: float, result: str) -> None:
         """Mark screening once; the overall call remains open through human audio."""
         with closing(self._conn()) as c, c:

@@ -70,7 +70,9 @@ def test_admission(setup, trusted, blocked, route, state, screen_starts, receive
     assert sum(op == "start" for op, _ in receiver.ops) == receiver_starts
     assert [e.type for e in gateway.events[:2]] == ["call.arrived", "call.route"]
     assert all(e.call_id == gateway.incoming.call_id for e in gateway.events)
-    assert store.call_by_request("request-1")["public_call_id"] == gateway.incoming.call_id
+    row = store.call_by_request("request-1")
+    assert row["public_call_id"] == gateway.incoming.call_id
+    assert row["started_at"] == 1000.0
 
 
 def test_screened_handoff_needs_accept_and_media_readiness(setup):
@@ -171,6 +173,24 @@ def test_offline_receiver_and_ring_timeout_do_not_claim_message_taken(tmp_path):
     assert gateway.pending_reason == "ring_timeout"
     with pytest.raises(GatewayError):
         gateway.command("receiver", "call.accept", gateway.incoming.call_id, "late", gateway.revision)
+
+
+def test_default_media_timeout_allows_remote_connection_setup(tmp_path):
+    store = Store(str(tmp_path / "calls.db"))
+    store.add_trusted("+14165550111")
+    now = [0.0]
+    gateway = Gateway(store, Classifier(), Transport(), Transport(),
+                      clock=lambda: now[0], wall=lambda: 1000.0)
+    gateway.arrive("remote", "+14165550111")
+    gateway.command("receiver", "call.accept", gateway.incoming.call_id,
+                    "accept", gateway.revision)
+    now[0] = 11.0
+    assert gateway.tick() is None
+    assert gateway.state is State.CONNECTING
+    now[0] = 31.0
+    gateway.tick()
+    assert gateway.state is State.MESSAGE_PENDING
+    assert gateway.pending_reason == "media_unavailable"
 
 
 def test_high_stakes_and_receiver_end_authority(tmp_path):

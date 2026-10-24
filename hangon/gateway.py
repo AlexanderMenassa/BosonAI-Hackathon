@@ -31,7 +31,7 @@ class Gateway:
                  receiver: Transport, wall: Callable[[], float] = time.time,
                  clock: Callable[[], float] = time.monotonic,
                  receiver_available: Callable[[], bool] = lambda: True,
-                 ring_timeout: float = 30.0, connect_timeout: float = 10.0):
+                 ring_timeout: float = 30.0, connect_timeout: float = 30.0):
         self.store, self.classifier = store, classifier
         self.screening, self.receiver = screening, receiver
         self.wall = wall
@@ -74,7 +74,7 @@ class Gateway:
         self.session = CallSession(number, self.classifier, self.store,
                                    browser_call_id=self.incoming.call_id, wall=self.wall,
                                    clock=self.clock)
-        self.store.begin_call(self.incoming.call_id, request_id, number, self.session.started_wall)
+        self.store.begin_call(self.incoming.call_id, request_id, number, self.session.started_at)
         self.route = self.session.admission_route()
         self.state, self.revision, self.events, self._acks = State.ARRIVED, 0, [], {}
         self._closed = set()

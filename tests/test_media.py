@@ -45,6 +45,24 @@ def test_outbound_audio_paces_and_clears_queued_speech():
     asyncio.run(scenario())
 
 
+def test_outbound_audio_keeps_recent_speech_when_backlog_is_full():
+    async def scenario():
+        output = OutboundAudio()
+        output.enabled = True
+        output.max_buffer_ms = 40
+        output.push(b"\x01\x00" * 480)
+        output.push(b"\x02\x00" * 480)
+        output.push(b"\x03\x00" * 480)
+        assert output.queued_bytes == 1920
+        first = await output.recv()
+        second = await output.recv()
+        assert bytes(first.planes[0])[:960] == b"\x02\x00" * 480
+        assert bytes(second.planes[0])[:960] == b"\x03\x00" * 480
+        assert output.queued_bytes == 0
+        output.stop()
+    asyncio.run(scenario())
+
+
 def test_human_route_requires_both_connected_peers_and_closes_screen():
     class Peer:
         def __init__(self, state):
