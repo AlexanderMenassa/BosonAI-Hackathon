@@ -12,6 +12,13 @@ Lifecycle, as driven by whatever transport sits on top (simulator, phone line, .
     if d.mode: say = agent.say(d.mode)      # agent speaks; session.record_agent(say)
     if d.action in (FORWARD, END): session.finish()
     ... or if the caller hangs up: session.on_hangup()
+
+on_caller_turn() is synchronous: the agent waits for the classifier. Transports that must keep the conversation
+flowing use the two halves it is made of instead (see pipeline.TurnPipeline, which does this for them):
+
+    d0 = session.begin_turn(text)           # instant, no classifier: record the turn, regex-only flags
+    ... the agent keeps talking (d0 is a provisional CONTINUE/SCREEN) while the classifier runs elsewhere ...
+    d = session.apply_result(result, as_of_turn=n)   # verdict + routing decision, when the classifier is done
 """
 from __future__ import annotations
 
@@ -122,28 +129,54 @@ class CallSession:
         return replace(r, scam_score=round(max(SCORE_ORDINARY, r.scam_score - step), 2),
                        reason=f"no scam behaviour so far ({self._clean_turns}/{n} normal turns)")
 
-    def on_caller_turn(self, text: str) -> Decision:
+    def begin_turn(self, text: str) -> Decision:
+        """First half of a caller turn: everything that needs no classifier. Instant.
+
+        Records the turn and runs the regex-only checks (injection attempt, high-stakes words). Returns a
+        PROVISIONAL decision (keep screening) that is safe to act on while the real verdict is still being worked
+        out: it never forwards, ends, or blocks anything."""
         if self.ended:
             raise RuntimeError("call already finished")
         self.transcript.append(("caller", text))
         self.turns += 1
+        if looks_like_injection(text):
+            self.injection_attempt = True
+        self.high_stakes = self.high_stakes or mentions_high_stakes(text)
+        return Decision(Action.CONTINUE, Mode.SCREEN, note="classifying in the background")
 
-        result = self.classifier.classify(self.transcript)
+    def apply_result(self, result: ClassifierResult, as_of_turn: int | None = None) -> Decision:
+        """Second half of a caller turn: fold a classifier result into the call state and decide.
+
+        `as_of_turn` is the turn count the result was computed for. When newer turns have been heard since (the
+        result is STALE), anything that would let the caller through or close the call on a non-scam verdict is
+        deferred: the newer turn may say something the stale result never saw, and the next result decides. A
+        SCAM verdict is always acted on, since evidence of a scam does not go away."""
+        if self.ended:
+            raise RuntimeError("call already finished")
+        stale = as_of_turn is not None and as_of_turn < self.turns
         self.last_result = result
         self.evidence.merge(result.evidence)
         if result.caller_summary:
             self.caller_summary = result.caller_summary
-        if looks_like_injection(text):
-            self.injection_attempt = True
-        self.high_stakes = self.high_stakes or result.high_stakes or mentions_high_stakes(text)
+        self.high_stakes = self.high_stakes or result.high_stakes
         result = self._apply_benign_decay(result)
         self.last_result = result
         self._update_verdict(result)
+        return self._decide(stale)
 
+    def on_caller_turn(self, text: str) -> Decision:
+        """Both halves in one blocking call: classify, then decide."""
+        self.begin_turn(text)
+        return self.apply_result(self.classifier.classify(list(self.transcript)), as_of_turn=self.turns)
+
+    def _decide(self, stale: bool = False) -> Decision:
         if self.verdict is Label.SCAM:
             # End the call immediately upon a confirmed scam verdict,
             # cutting off evasive or uncooperative callers right away.
             return self._end(Mode.GOODBYE, Outcome.SCAM_ENDED, "scam detected: ending call immediately")
+
+        if stale:
+            return Decision(Action.CONTINUE, Mode.SCREEN, note="verdict deferred: a newer turn is still being classified")
 
         if self.verdict is Label.LEGIT:
             if self.high_stakes:

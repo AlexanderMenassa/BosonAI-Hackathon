@@ -12,10 +12,14 @@ How a turn works (same brain as the text simulator):
 
     caller speaks -> Higgs server VAD hears the end of the turn
       -> Higgs transcribes it (conversation.item.input_audio_transcription.completed)
-      -> engine: classify + decide the mode           (automatic replies are OFF: create_response=false)
+      -> engine: record the turn, classify in the background  (automatic replies are OFF: create_response=false)
       -> response.create with that turn's role and guidance (per-reply instructions, the method that passed
          the probe)
       -> Higgs speaks; audio plays through the speakers
+    The classifier never holds up the conversation. If its verdict is ready within HANGON_CLASSIFIER_GRACE seconds
+    it picks the reply as usual; if not, Margaret answers with a normal screening reply straight away and the
+    verdict is applied when it lands. A forward / hang-up verdict that arrives late is carried out right after her
+    current line (the closing line is queued behind it), never over the caller.
     caller talks over the agent -> server stops generating (interrupt_response=true), we flush the speaker
       and truncate its stored reply to what the caller actually heard. A short noise during the agent's reply is
       not a turn: the agent carries on. Any utterance on the caller's own turn counts, even one word.
@@ -34,9 +38,10 @@ from .audio_io import RATE, AudioIO
 from .classifier import Classifier
 from .config import Settings
 from .engine import CallSession
-from .models import Action, Mode, Persona
+from .models import Action, Decision, Mode, Persona
 from .notify import ConsoleNotifier, Notifier
 from .persona import base_prompt, build_instructions, known_facts, turn_guidance
+from .pipeline import TurnPipeline
 from .reports import notify_after_call
 from .sim import CLASSIFIERS
 from .store import Store
@@ -55,7 +60,12 @@ class VoiceCall:
         self.session = CallSession(number, classifier, store, settings)
         self._connect = connect  # injectable for tests
         self.ws = None
-        self.pending_action: Action | None = None   # FORWARD / END waiting for the last line to finish playing
+        self.pipeline = TurnPipeline(self.session, on_applied=self._log_applied)
+        self.terminal: Action | None = None         # FORWARD / END decided: hear no more turns, the closing line is coming
+        self.pending_action: Action | None = None   # FORWARD / END waiting for the closing line to finish playing
+        self._closing_inflight = False              # the reply in flight is the closing line (not a provisional one)
+        self.caller_speaking = False                # the server's VAD currently hears the caller
+        self._speak_lock = asyncio.Lock()           # replies are requested in the order they were asked for
         self.assistant_item: str | None = None      # the reply currently being spoken (for truncation)
         self.responding = False
         self.interrupted = False                    # the agent was cut off by the caller (or a noise)
@@ -102,17 +112,25 @@ class VoiceCall:
         }}
 
     async def speak(self, mode: Mode, guidance: str = "", caller_text: str | None = None,
-                    history: list[str] | None = None) -> None:
+                    history: list[str] | None = None, closing: Action | None = None) -> None:
+        """Ask Higgs for one reply. `closing` marks the call's last line (FORWARD / END): the call finishes once
+        it has played."""
         instructions = build_instructions(self.persona, mode, guidance, caller_text, history or ())
         self.dbg(f"mode={mode.value} instructions: {instructions}")
-        # One reply at a time: wait for the previous one to finish (or be cancelled by an interruption).
-        for _ in range(100):
-            if not self.responding:
-                break
-            await asyncio.sleep(0.1)
-        self.responding = True
-        self.mode = mode
-        await self.send({"type": "response.create", "response": {"instructions": instructions}})
+        # The lock is fair (first come, first served), so a late closing line can never overtake the provisional
+        # reply that was requested before it.
+        async with self._speak_lock:
+            # One reply at a time: wait for the previous one to finish (or be cancelled by an interruption).
+            for _ in range(100):
+                if not self.responding:
+                    break
+                await asyncio.sleep(0.1)
+            self.responding = True
+            self.mode = mode
+            if closing is not None:
+                self.pending_action = closing
+                self._closing_inflight = True
+            await self.send({"type": "response.create", "response": {"instructions": instructions}})
 
     # ------------------------------------------------------------------ main flow
     async def run(self) -> CallSession:
@@ -135,7 +153,8 @@ class VoiceCall:
             await self.send(self.session_config())
             await self._wait_for_session()
             self.audio.start(self._on_mic_chunk)
-            tasks = [asyncio.create_task(self._receiver()), asyncio.create_task(self._turn_worker())]
+            tasks = [asyncio.create_task(self._receiver()), asyncio.create_task(self._turn_worker()),
+                     asyncio.create_task(self._late_worker())]
             await self.speak(Mode.GREET)
             await self.done.wait()
         finally:
@@ -193,8 +212,12 @@ class VoiceCall:
             if not t.endswith(".delta"):
                 self.dbg(f"<- {t}")
             if t == "input_audio_buffer.speech_started":
+                self.caller_speaking = True
                 await self._on_barge_in()
+            elif t == "input_audio_buffer.speech_stopped":
+                self.caller_speaking = False
             elif t == "conversation.item.input_audio_transcription.completed":
+                self.caller_speaking = False
                 text = (evt.get("transcript") or "").strip()
                 item = evt.get("item_id") or ""
                 self.dbg(f"   transcript for item {item!r}: {text!r}")
@@ -219,7 +242,11 @@ class VoiceCall:
                     self.log(f"agent> {line}")
             elif t == "response.done":
                 self.responding = False
-                if self.pending_action:
+                # Only the closing line ends the call. A provisional reply finishing (or an interrupted one being
+                # cancelled) while a verdict is on its way must not.
+                status = (evt.get("response") or {}).get("status")
+                if self.pending_action and self._closing_inflight and status != "cancelled":
+                    self._closing_inflight = False
                     asyncio.create_task(self._finish_after_playback())
             elif t == "error":
                 self.log(f"  [higgs error] {evt.get('error', evt)}")
@@ -245,7 +272,7 @@ class VoiceCall:
             text = await self.turns.get()
             while not self.turns.empty():          # caller said several bits in a row: one turn
                 text += " " + self.turns.get_nowait()
-            if self.session.ended or self.pending_action:
+            if self.session.ended or self.terminal:
                 continue
             was_interrupted, self.interrupted = self.interrupted, False
             if was_interrupted and len(text.split()) < self.settings.min_interrupt_words:
@@ -260,17 +287,41 @@ class VoiceCall:
                 self.log(f"  [repeat of the last caller turn, ignored: {text!r}]")
                 continue
             self.log(f"caller> {text}")
-            t0 = time.monotonic()
-            d = await asyncio.to_thread(self.session.on_caller_turn, text)
-            self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}"
-                     f"  ({time.monotonic() - t0:.1f}s)")
+            # Records the turn at once. Returns the real decision if the classifier is quick, otherwise a
+            # provisional "keep screening" so Margaret answers without a dead pause; the verdict then arrives
+            # through _late_worker.
+            d = await self.pipeline.submit(text)
             heard = [t for w, t in self.session.transcript if w == "caller"]
             guidance = turn_guidance(d.mode, known_facts(self.session.last_result, self.session.evidence, heard),
                                        self.asked)
-            if d.action in (Action.END, Action.FORWARD):
-                self.pending_action = d.action
+            closing = d.action if d.action in (Action.END, Action.FORWARD) else None
+            if closing:
+                self.terminal = closing
                 self.log(f"[{d.action.value}] {d.note}")
-            await self.speak(d.mode, guidance, text, heard[:-1])
+            await self.speak(d.mode, guidance, text, heard[:-1], closing=closing)
+
+    async def _late_worker(self) -> None:
+        """Carry out a forward / hang-up verdict that was not ready when Margaret had to answer."""
+        while not self.done.is_set():
+            d = await self.pipeline.late.get()
+            if self.session.ended or self.done.is_set():
+                return
+            self.terminal = d.action                # no more turns: the call is closing
+            self.log(f"[{d.action.value}] {d.note}  (verdict arrived while the conversation moved on)")
+            await self._wait_for_quiet()
+            if self.session.ended or self.done.is_set():
+                return
+            # Queued behind her current line by speak(); every closing mode is a fixed line.
+            await self.speak(d.mode, closing=d.action)
+
+    async def _wait_for_quiet(self, timeout: float = 3.0) -> None:
+        """Do not talk over the caller: hold a late closing line until they stop (or `timeout` passes)."""
+        deadline = time.monotonic() + timeout
+        while self.caller_speaking and time.monotonic() < deadline and not self.done.is_set():
+            await asyncio.sleep(0.05)
+
+    def _log_applied(self, d: Decision, took: float) -> None:
+        self.log(f"  [{self.session.status_line()}]  {self.session.last_result.reason}  ({took:.1f}s)")
 
     async def _finish_after_playback(self) -> None:
         """Let the last line finish playing, then forward or end the call."""

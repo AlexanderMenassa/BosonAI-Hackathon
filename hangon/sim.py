@@ -23,6 +23,7 @@ from .config import Settings
 from .engine import CallSession
 from .models import Action, Mode, Persona
 from .persona import known_facts, turn_guidance
+from .pipeline import TurnPipeline
 from .notify import ConsoleNotifier, Notifier
 from .reports import notify_after_call
 from .store import Store
@@ -76,6 +77,7 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                    show_caller: bool = False) -> CallSession:
     say = print if echo else (lambda *_, **__: None)
     session = CallSession(number, classifier, store, settings)
+    pipe = TurnPipeline(session, on_applied=lambda d, took: say(f"  [{session.status_line()}]  {session.last_result.reason}"))
 
     d = session.open()
     say(f"\n=== incoming call from {number} ===")
@@ -98,13 +100,22 @@ async def run_call(number: str, next_line: NextLine, classifier: Classifier, age
                 break
             if show_caller:  # scripted callers: echo their lines (a typed caller already sees them)
                 say(f"caller> {text}")
-            d = await asyncio.to_thread(session.on_caller_turn, text)
-            say(f"  [{session.status_line()}]  {session.last_result.reason}")
+            # The classifier runs in the background: if its verdict is not ready within the grace window the agent
+            # answers with a provisional screening reply (while the classifier keeps working) and a forward / hang-up
+            # verdict that lands meanwhile is carried out right after that reply, as in the voice transport.
+            d = await pipe.submit(text)
             heard = [t for who, t in session.transcript if who == "caller"]
             guidance = turn_guidance(d.mode, known_facts(session.last_result, session.evidence, heard), asked)
             line = await agent.say(d.mode, text, guidance)
             session.record_agent(line)
             say(f"agent> {line}")
+            if d.action not in (Action.END, Action.FORWARD):
+                late = await pipe.settle()
+                if late is not None:
+                    d = late
+                    line = await agent.say(d.mode)
+                    session.record_agent(line)
+                    say(f"agent> {line}")
             if d.action in (Action.END, Action.FORWARD):
                 say(f"[{d.action.value}] {d.note}")
                 session.finish()

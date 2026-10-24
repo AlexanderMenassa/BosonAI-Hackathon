@@ -36,6 +36,12 @@ class Settings:
     legit_enter: float = 0.15
     benign_turns: int = 4
 
+    # Background classification: how long (seconds) a caller turn waits for the classifier before the agent
+    # answers anyway with a provisional screening reply. The verdict then lands whenever it is ready and any
+    # forward / hang-up follows it. A fast classifier finishes inside this window and behaves exactly as before;
+    # 0 never waits (the agent always answers first).
+    classifier_grace: float = 0.8
+
     # Local classifier
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
@@ -75,6 +81,7 @@ class Settings:
             scam_exit_turns=int(e.get("HANGON_SCAM_EXIT_TURNS", 2)),
             legit_enter=float(e.get("HANGON_LEGIT_ENTER", 0.3)),
             benign_turns=int(e.get("HANGON_BENIGN_TURNS", 4)),
+            classifier_grace=float(e.get("HANGON_CLASSIFIER_GRACE", 0.8)),
             ollama_url=e.get("OLLAMA_URL", "http://localhost:11434"),
             ollama_model=e.get("OLLAMA_MODEL", "llama3.2:3b"),
             ollama_timeout=float(e.get("OLLAMA_TIMEOUT", 20)),

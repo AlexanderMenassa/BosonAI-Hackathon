@@ -1,6 +1,9 @@
 """Browser screening uses the selected classifier and engine-directed speech."""
 import asyncio
 import stat
+import sys
+
+import pytest
 
 from hangon.browser.server import Room, SafeBrowserClassifier
 from hangon.browser.media import HiggsScreen, OutboundAudio
@@ -18,7 +21,7 @@ class RecordingClassifier:
         return ClassifierResult(self.label, 0.05 if self.label is Label.LEGIT else 0.5,
                                 "test assessment", Evidence(), source=self.source)
 
-
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no Unix file modes (0o600)")
 def test_browser_call_writes_private_log_without_exposing_it_in_room_state(tmp_path):
     async def scenario():
         class Socket:
